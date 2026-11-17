@@ -48,6 +48,16 @@ const LEVEL_LABELS: Record<(typeof LEVELS)[number], string> = {
   max: "Max",
 };
 
+/** A model's thinking levels, or null when agy has not reported its model list yet. */
+export function thinkingLevels(
+  modelId: string,
+  variantIds: readonly string[],
+): Array<(typeof LEVELS)[number]> | null {
+  if (variantIds.length === 0) return null;
+  const variants = new Set(variantIds);
+  return LEVELS.filter((level) => variants.has(`${modelId}-${level}`));
+}
+
 /**
  * agy's ACP config reports thinking levels only for the session's current model (Argon:
  * low/medium/high), but its model list names every variant, such as
@@ -59,9 +69,8 @@ export function withModelThinking<T extends ProviderModel>(
   variantIds: readonly string[],
 ): T[] {
   if (variantIds.length === 0) return [...models];
-  const variants = new Set(variantIds);
   return models.map((model) => {
-    const levels = LEVELS.filter((level) => variants.has(`${model.id}-${level}`));
+    const levels = thinkingLevels(model.id, variantIds) ?? [];
     const thinkingOptions: ProviderThinkingOption[] = levels.map((id) => ({
       id,
       label: LEVEL_LABELS[id],

@@ -15,6 +15,7 @@ import {
   DEFAULT_MODE,
   SUBAGENT_CONTROL,
   SUBAGENT_OPTION,
+  thinkingLevels,
   withBypassMode,
   withModelThinking,
 } from "./catalog.ts";
@@ -159,6 +160,39 @@ export function wrapConnection(
     });
   }
 
+  /** Catalog requests this wrapper sends itself; their events never reach Paseo. */
+  const privateRequests = new Map<string, () => void>();
+  let warmup: Promise<void> | null = null;
+  let privateSequence = 0;
+
+  /** Makes agy list its models once, for a session opened before any catalog request. */
+  function knowModels(): Promise<void> {
+    if (options.modelIds().length > 0) return Promise.resolve();
+    warmup ??= new Promise<void>((resolve) => {
+      const requestId = `antigravity-plus-models-${++privateSequence}`;
+      const timer = setTimeout(done, 15_000);
+      function done() {
+        clearTimeout(timer);
+        privateRequests.delete(requestId);
+        warmup = null;
+        resolve();
+      }
+      privateRequests.set(requestId, done);
+      inner.send({ type: "catalog", requestId }).catch(done);
+    });
+    return warmup;
+  }
+
+  /**
+   * Paseo fills the catalog's default thinking level in for every model, but agy rejects any
+   * thinking level for a model without effort variants (GPT-OSS, Orchestrator), failing the open.
+   */
+  function supportsThinking(model: string | undefined): boolean {
+    if (!model) return true;
+    const levels = thinkingLevels(model, options.modelIds());
+    return levels === null || levels.length > 0;
+  }
+
   function present(state: SessionState, config: ProviderConfigState): ProviderConfigState {
     // Bypass holds only while agy stays in the mode it runs on; agy can change mode itself.
     if (config.mode && config.mode !== BYPASS_NATIVE_MODE) state.policy.bypass = false;
@@ -180,6 +214,10 @@ export function wrapConnection(
   }
 
   inner.onEvent((event) => {
+    if ((event.type === "catalog" || event.type === "request.failed") && privateRequests.has(event.requestId)) {
+      privateRequests.get(event.requestId)?.();
+      return;
+    }
     if ((event.type === "session.ready" || event.type === "request.failed") && event.requestId) {
       settleOpen(event.requestId);
     }
@@ -236,15 +274,6 @@ export function wrapConnection(
       activeTurnId: null,
     };
     sessions.set(input.sessionId, state);
-    const prepared: SessionOpen = {
-      ...input,
-      config: {
-        ...input.config,
-        mode: bypass ? BYPASS_NATIVE_MODE : requestedMode,
-        providerOptions: ownOptions.rest,
-        settings: ownSettings.rest ?? {},
-      },
-    };
     const context: LaunchContext = {
       env: { ...(input.config.env ?? {}), ...(options.env ?? {}) },
       policy: state.policy,
@@ -255,13 +284,26 @@ export function wrapConnection(
     let release = () => {};
     opening.set(input.sessionId, new Promise<void>((resolve) => (release = resolve)));
     openRequests.set(input.requestId, { sessionId: input.sessionId, release });
-    try {
-      return launchContext.run(context, () => inner.send(prepared));
-    } catch (error) {
+    const start = async () => {
+      // Whether the model takes a thinking level is only known once agy listed its models.
+      if (input.config.thinkingOption && input.config.model) await knowModels();
+      const prepared: SessionOpen = {
+        ...input,
+        config: {
+          ...input.config,
+          mode: bypass ? BYPASS_NATIVE_MODE : requestedMode,
+          thinkingOption: supportsThinking(input.config.model) ? input.config.thinkingOption : undefined,
+          providerOptions: ownOptions.rest,
+          settings: ownSettings.rest ?? {},
+        },
+      };
+      await launchContext.run(context, () => inner.send(prepared));
+    };
+    return start().catch((error) => {
       settleOpen(input.requestId);
       sessions.delete(input.sessionId);
       throw error;
-    }
+    });
   }
 
   function configure(input: SessionConfigure): Promise<void> {
@@ -277,6 +319,9 @@ export function wrapConnection(
       providerOptions: ownOptions.rest,
       settings: ownSettings.rest,
     };
+    if (changes.thinkingOption && !supportsThinking(changes.model ?? state.innerConfig?.model)) {
+      changes.thinkingOption = undefined;
+    }
     if (changes.mode !== undefined) {
       // null returns the mode to the provider default, which is Bypass.
       const target = changes.mode ?? DEFAULT_MODE;

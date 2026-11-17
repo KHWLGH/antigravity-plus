@@ -374,3 +374,24 @@ test("copies agy tool content into rawOutput and edit diffs into the adapter's e
   assert.equal(edit.params.update.rawInput.newString, "a\nbeta updated\n");
   assert.equal(edit.params.update.rawInput.Target, "beta world");
 });
+
+test("before agy listed its models, an open with a thinking level asks for the list first", async () => {
+  const inner = fakeInner();
+  let ids: string[] = [];
+  const seen: ProviderEvent[] = [];
+  const connection = wrapConnection(inner.connection, [], {
+    modelIds: () => ids,
+    setSubagentsAllowed: async () => {},
+  });
+  connection.onEvent((event) => seen.push(event));
+  const opened = connection.send(openInput({ model: "gpt-oss-120b-medium", thinkingOption: "medium" }));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const catalog = inner.sent[0] as Extract<ProviderInput, { type: "catalog" }>;
+  assert.equal(catalog.type, "catalog");
+  ids = ["gpt-oss-120b-medium", "gemini-4-hydrogen-high"];
+  inner.fire({ type: "catalog", requestId: catalog.requestId, catalog: { models: [], modes: [] } } as ProviderEvent);
+  await opened;
+  const open = inner.sent[1] as Extract<ProviderInput, { type: "session.open" }>;
+  assert.equal(open.config.thinkingOption, undefined);
+  assert.equal(seen.length, 0, "the private catalog answer is not forwarded");
+});

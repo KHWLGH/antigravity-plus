@@ -273,10 +273,22 @@ export function openAgyStream(
       child.stdin.write(`${JSON.stringify(message)}\n`, (error) => (error ? reject(error) : resolve()));
     });
   const lines = createInterface({ input: child.stdout });
+  // agy can keep writing after the adapter cancels the stream (a failed open, a close), and
+  // enqueueing on a closed controller throws inside the readline callback, which would crash
+  // the whole plugin process. Drop such lines.
+  let readableOpen = true;
   const readable = new ReadableStream<AcpStreamMessage>({
     start(controller) {
+      const deliver = (message: AcpStreamMessage) => {
+        if (!readableOpen) return;
+        try {
+          controller.enqueue(message);
+        } catch {
+          readableOpen = false;
+        }
+      };
       lines.on("line", (line) => {
-        if (!line.trim()) return;
+        if (!line.trim() || !readableOpen) return;
         let message: AcpStreamMessage;
         try {
           message = JSON.parse(line) as AcpStreamMessage;
@@ -294,9 +306,11 @@ export function openAgyStream(
             return;
           }
         }
-        for (const forwarded of relay.incoming(withToolResults(message))) controller.enqueue(forwarded);
+        for (const forwarded of relay.incoming(withToolResults(message))) deliver(forwarded);
       });
       child.once("error", (error) => {
+        if (!readableOpen) return;
+        readableOpen = false;
         try {
           controller.error(error);
         } catch {
@@ -310,6 +324,8 @@ export function openAgyStream(
             `[antigravity-plus] agy acp exited (${signal ?? code}): ${stderrTail.trim().slice(-800)}`,
           );
         }
+        if (!readableOpen) return;
+        readableOpen = false;
         try {
           controller.close();
         } catch {
@@ -318,6 +334,7 @@ export function openAgyStream(
       });
     },
     cancel() {
+      readableOpen = false;
       stop();
     },
   });

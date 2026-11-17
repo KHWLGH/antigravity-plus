@@ -5,15 +5,20 @@ Antigravity+ adds a second Antigravity provider to Paseo that runs `agy acp`, th
 - Conversation history after a daemon restart or agent reload. Paseo reopens the agy conversation with `session/load`, and agy replays it into the timeline.
 - Import session lists your local agy conversations, including ones started by the built-in Antigravity provider or in the agy terminal UI.
 - Slash commands and skills such as `/goal`, `/plan`, `/compact` and your own skills appear in the composer.
-- Permission modes from agy: Default, Accept edits, Auto and Plan. New agents start in Auto, which runs edits and safe commands and asks through a Paseo permission card before anything irreversible. agy is never started with `--dangerously-skip-permissions`.
+- Modes: Bypass, plus agy's own Default, Accept edits, Auto and Plan. New agents start in Bypass, where every edit and command runs without asking and outside agy's terminal sandbox. Bypass runs agy in its Default mode and the plugin approves each request agy makes; Auto and the other modes ask through Paseo permission cards. Deny rules in your agy settings still apply in every mode.
 - Paseo's MCP servers and the agent's Paseo instructions reach agy, so Antigravity agents can use Paseo's orchestration tools.
+- Subagents through Paseo. agy's own `invoke_subagent` starts subagents that Paseo cannot show or control, so it is blocked in Antigravity+ sessions and agy is told to use Paseo's `create_agent` instead. The "agy subagents" switch in the composer turns native subagents back on for one agent, which agy's `/teamwork` and `/boost` need.
 - The context window meter in the composer, from agy's usage updates.
 - Steering: a message sent during a running turn joins that turn instead of interrupting it.
-- Model and thinking level as separate choices.
+- Model and thinking level as separate choices, with each model's own levels, such as XHigh for Gemini 4 Hydrogen.
+
+## Setup
+
+Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, linked into agy's global plugins folder (`~/.gemini/config/plugins/`). Its hook acts only on agy processes started by Antigravity+, which carry `ANTIGRAVITY_PLUS=1`; anywhere else it answers "allow", and agy does not ask permission for `invoke_subagent` on its own, so other agy sessions behave as before. Without the companion plugin, agy is still told to prefer Paseo agents but nothing enforces it.
 
 ## Quota
 
-The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend for the same quota agy shows. It reports the plan name and each window Google returns: a weekly and a 5-hour limit for Claude and GPT models, and one shared pool for Google models. Google does not report a length for the Google pool, so it is labeled by name only. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin never reads the refresh token or writes the Keychain.
+The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend for quota. It reports the plan name, a weekly and a 5-hour limit for Claude and GPT models, and the pool shared by Gemini 4 Hydrogen and the Flash models. Google does not report a length for that pool, so it is labeled by name only. Gemini 4 Argon has a separate quota that this backend does not report, so Argon is not shown. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin never reads the refresh token or writes the Keychain.
 
 ## Requirements
 

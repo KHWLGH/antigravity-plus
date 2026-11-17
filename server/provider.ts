@@ -15,6 +15,8 @@ export const PROVIDER_ID = "antigravity-plus";
 const LABEL = "Antigravity+";
 /** agy 1.5.8 added context window updates to ACP sessions; earlier ACP lacks them. */
 const MIN_AGY = [1, 5, 8] as const;
+/** Bump when the catalog this plugin builds changes shape, so Paseo drops its cached copy. */
+const CATALOG_REVISION = 2;
 
 /** Adds Bypass (the default for new agents) and each model's own thinking levels. */
 const catalogTransformer: AcpTransformer = {
@@ -84,7 +86,7 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
       if (!launch) return undefined;
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
       return createHash("sha256")
-        .update(JSON.stringify([PROVIDER_ID, launch.command, launch.args, env]))
+        .update(JSON.stringify([PROVIDER_ID, CATALOG_REVISION, launch.command, launch.args, env]))
         .digest("hex");
     },
     async connect(request) {
