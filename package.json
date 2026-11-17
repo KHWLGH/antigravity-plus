@@ -1,0 +1,23 @@
+{
+  "name": "antigravity-plus",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "files": [
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "icon.svg",
+    "index.server.ts",
+    "server/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test server/*.test.ts"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.16.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
+  }
+}
