@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import type { AcpStream, AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
-import { SessionListRelay } from "./session-list.ts";
+import { SessionListRelay, refreshSessionList } from "./session-list.ts";
 
 /** Methods whose `_meta` agy reads when it creates or reopens a session runtime. */
 const SESSION_METHODS = new Set(["session/new", "session/load", "session/resume"]);
@@ -268,7 +268,11 @@ export function openAgyStream(
   });
   const relay = new SteeringRelay();
   // agy reports conversations without a stored directory in this process's own directory.
-  const lists = new SessionListRelay(undefined, cwd);
+  const lists = new SessionListRelay({
+    placeholderCwd: cwd,
+    refresh: () => void refreshSessionList(launch, env),
+  });
+  let deliverToAdapter: (message: AcpStreamMessage) => void = () => undefined;
   let stderrTail = "";
   child.stderr.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
@@ -311,6 +315,7 @@ export function openAgyStream(
           readableOpen = false;
         }
       };
+      deliverToAdapter = deliver;
       lines.on("line", (line) => {
         if (!line.trim() || !readableOpen) return;
         let message: AcpStreamMessage;
@@ -375,8 +380,13 @@ export function openAgyStream(
   const writable = new WritableStream<AcpStreamMessage>({
     write(message) {
       const prepared = withAntigravityMeta(message, options.appendSystemPrompt);
+      const cached = lists.outgoing(prepared);
+      if (cached) {
+        // Answered from the shared list snapshot; agy never sees this request.
+        setTimeout(() => deliverToAdapter(cached), 0);
+        return Promise.resolve();
+      }
       relay.outgoing(prepared);
-      lists.outgoing(prepared);
       return write(prepared);
     },
     close() {

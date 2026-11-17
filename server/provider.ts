@@ -7,6 +7,7 @@ import type {
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import { latestModelIds, openAgyStream } from "./agy-stream.ts";
+import { refreshSessionList } from "./session-list.ts";
 import { DEFAULT_MODE, withBypassMode, withModelThinking } from "./catalog.ts";
 import { launchContext, wrapConnection } from "./session-wrapper.ts";
 import { AGY_ENV, SUBAGENT_GUIDANCE } from "./subagents.ts";
@@ -92,6 +93,8 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
     async connect(request) {
       const launch = request.launch;
       if (!launch) throw new Error("The daemon must supply the agy launch command");
+      // Fill the Import session list in the background so the dialog opens without agy's start-up wait.
+      void refreshSessionList(launch, AGY_ENV);
       const inner = await runAcpProvider({
         id: PROVIDER_ID,
         label: LABEL,

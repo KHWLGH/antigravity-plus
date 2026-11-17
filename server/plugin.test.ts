@@ -9,7 +9,15 @@ import type {
   ProviderModel,
 } from "@getpaseo/plugin/server/provider";
 import { withModelThinking } from "./catalog.ts";
-import { SessionListRelay, arrangeSessions, decodeCwd } from "./session-list.ts";
+import {
+  SessionListRelay,
+  arrangeSessions,
+  cliLoadable,
+  decodeCwd,
+  resetSessionListCache,
+} from "./session-list.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { wrapConnection } from "./session-wrapper.ts";
 import {
   availableModelsSchema,
@@ -407,6 +415,8 @@ test("a failed open drops its session state", async () => {
 
 const kb = "/Users/dev/kb";
 const noRealpath = () => [];
+/** No real filesystem: every session loadable, no realpaths. */
+const plain = { resolve: noRealpath, loadable: () => true };
 const listed = [
   { sessionId: "old", cwd: kb, updatedAt: "2026-11-01T00:00:00Z" },
   { sessionId: "sub", cwd: `${kb}/notes`, updatedAt: "2026-11-17T12:00:00Z" },
@@ -417,7 +427,7 @@ const listed = [
 ];
 
 test("session list keeps the requested directory only, newest first, undated last", () => {
-  const sessions = arrangeSessions(listed, kb, noRealpath);
+  const sessions = arrangeSessions(listed, kb, plain);
   assert.deepEqual(sessions.map((session) => session.sessionId), ["acp-new", "old", "undated"]);
   assert.ok(sessions.every((session) => session.cwd === kb), "kept sessions report the requested cwd");
 });
@@ -426,19 +436,19 @@ test("percent-encoded and file: cwds are decoded so non-ASCII directories match"
   assert.equal(decodeCwd("/Users/dev/%E5%AD%A6%E4%B9%A0/%E7%AC%94%E8%AE%B0"), "/Users/dev/学习/笔记");
   assert.equal(decodeCwd("file:///Users/dev/a%20b"), "/Users/dev/a b");
   assert.equal(decodeCwd("/Users/dev/100%"), "/Users/dev/100%");
-  const sessions = arrangeSessions(listed, "/Users/dev/学习", noRealpath);
+  const sessions = arrangeSessions(listed, "/Users/dev/学习", plain);
   assert.deepEqual(sessions.map((session) => session.sessionId), ["encoded"]);
 });
 
 test("realpath variants match like the daemon's matcher", () => {
   const resolve = (value: string) => (value === "/link/kb" ? ["/Users/dev/kb"] : []);
-  const sessions = arrangeSessions(listed, "/link/kb", resolve);
+  const sessions = arrangeSessions(listed, "/link/kb", { resolve, loadable: () => true });
   assert.deepEqual(sessions.map((session) => session.sessionId), ["acp-new", "old", "undated"]);
   assert.equal(sessions[0].cwd, "/link/kb");
 });
 
 test("without a requested cwd every session comes back decoded and sorted", () => {
-  const sessions = arrangeSessions(listed, null, noRealpath);
+  const sessions = arrangeSessions(listed, null, plain);
   assert.equal(sessions.length, listed.length);
   assert.equal(sessions[0].sessionId, "elsewhere");
   assert.equal(sessions.at(-1)?.sessionId, "undated");
@@ -446,7 +456,8 @@ test("without a requested cwd every session comes back decoded and sorted", () =
 });
 
 test("the list relay follows cursors and answers the adapter once with every page", () => {
-  const relay = new SessionListRelay(noRealpath);
+  resetSessionListCache();
+  const relay = new SessionListRelay(plain);
   relay.outgoing({ jsonrpc: "2.0", id: 5, method: "session/list", params: { cwd: kb } });
   const first = relay.incoming({
     jsonrpc: "2.0",
@@ -465,7 +476,8 @@ test("the list relay follows cursors and answers the adapter once with every pag
 });
 
 test("a failed first page reaches the adapter unchanged", () => {
-  const relay = new SessionListRelay(noRealpath);
+  resetSessionListCache();
+  const relay = new SessionListRelay(plain);
   relay.outgoing({ jsonrpc: "2.0", id: 6, method: "session/list", params: {} });
   const error = { jsonrpc: "2.0" as const, id: 6, error: { code: -32000, message: "nope" } };
   assert.deepEqual(relay.incoming(error)?.deliver, [error]);
@@ -484,10 +496,47 @@ test("sessions agy reports in the listing directory have no known directory", ()
     { sessionId: "unknown", cwd: placeholder, updatedAt: "2026-11-17T11:00:00Z" },
   ];
   assert.deepEqual(
-    arrangeSessions(sessions, kb, noRealpath, placeholder).map((session) => session.sessionId),
+    arrangeSessions(sessions, kb, { ...plain, placeholderCwd: placeholder }).map((session) => session.sessionId),
     ["real"],
   );
-  assert.deepEqual(arrangeSessions(sessions, placeholder, noRealpath, placeholder), []);
-  const all = arrangeSessions(sessions, null, noRealpath, placeholder);
+  assert.deepEqual(arrangeSessions(sessions, placeholder, { ...plain, placeholderCwd: placeholder }), []);
+  const all = arrangeSessions(sessions, null, { ...plain, placeholderCwd: placeholder });
   assert.equal(all.find((session) => session.sessionId === "unknown")?.cwd, homedir());
+});
+
+test("only conversations agy CLI can load are listed; desktop app ones are hidden", () => {
+  const store = mkdtempSync(join(tmpdir(), "agp-store-"));
+  writeFileSync(join(store, "cli-1.db"), "");
+  const loadable = cliLoadable(store);
+  assert.equal(loadable("cli-1"), true);
+  assert.equal(loadable("app-1"), false);
+  assert.equal(cliLoadable(join(store, "missing"))("app-1"), true, "unknown store layout keeps everything");
+  const sessions = [
+    { sessionId: "cli-1", cwd: kb, updatedAt: "2026-11-17T10:00:00Z" },
+    { sessionId: "app-1", cwd: kb, updatedAt: "2026-11-17T11:00:00Z" },
+  ];
+  assert.deepEqual(arrangeSessions(sessions, kb, { resolve: noRealpath, loadable }).map((session) => session.sessionId), ["cli-1"]);
+});
+
+test("the shared list snapshot answers later requests, refreshing in the background when stale", () => {
+  resetSessionListCache();
+  let now = 1_000_000;
+  let refreshes = 0;
+  const options = { ...plain, now: () => now, refresh: () => void (refreshes += 1) };
+  const first = new SessionListRelay(options);
+  assert.equal(first.outgoing({ jsonrpc: "2.0", id: 1, method: "session/list", params: { cwd: kb } }), null, "nothing cached: ask agy");
+  first.incoming({ jsonrpc: "2.0", id: 1, result: { sessions: listed } });
+  const fresh = new SessionListRelay(options).outgoing({ jsonrpc: "2.0", id: 2, method: "session/list", params: { cwd: kb } }) as {
+    id: number;
+    result: { sessions: Array<{ sessionId: string }> };
+  };
+  assert.equal(fresh.id, 2);
+  assert.deepEqual(fresh.result.sessions.map((session) => session.sessionId), ["acp-new", "old", "undated"]);
+  assert.equal(refreshes, 0);
+  now += 5 * 60_000;
+  assert.ok(new SessionListRelay(options).outgoing({ jsonrpc: "2.0", id: 3, method: "session/list", params: {} }));
+  assert.equal(refreshes, 1, "stale: answered from memory and refreshed");
+  now += 30 * 60_000;
+  assert.equal(new SessionListRelay(options).outgoing({ jsonrpc: "2.0", id: 4, method: "session/list", params: {} }), null, "too old: ask agy");
+  resetSessionListCache();
 });

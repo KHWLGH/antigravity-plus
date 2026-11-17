@@ -1,8 +1,11 @@
-import { mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import type { AcpStreamMessage } from "@getpaseo/plugin/server/acp";
+import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 
 /**
  * Paseo's Import session dialog reads agy's `session/list` through the ACP adapter, which keeps
@@ -15,7 +18,12 @@ import type { AcpStreamMessage } from "@getpaseo/plugin/server/acp";
  * - it percent-encodes non-ASCII paths (`.../%E5%AD%A6%E4%B9%A0`), so they never equal the
  *   directory the daemon compares against.
  * - conversations stored without a directory are reported in the listing process's own working
- *   directory, so a listing run in the requested directory would claim them all.
+ *   directory, so a listing run in the requested directory would claim them all;
+ * - it also lists conversations of the Antigravity desktop app, which only the app can load:
+ *   `session/load` waits two seconds and opens an empty session.
+ * A listing also costs 3 to 4 seconds, because a new agy process signs in and fetches its
+ * configuration from Google before it answers. agy returns the same full list for any directory,
+ * so the plugin keeps one snapshot for every request and refreshes it in the background.
  * This layer answers the adapter with the requested directory's sessions only, decoded and
  * newest first, after collecting every page agy offers. Listings run in LIST_CWD, an empty
  * directory of this plugin, and a session reported there has no known directory.
@@ -96,23 +104,48 @@ function updatedAt(session: JsonObject): number {
   return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
 }
 
+/** Where agy CLI keeps the conversations it can load; the desktop app keeps its own elsewhere. */
+const CLI_CONVERSATIONS = path.join(homedir(), ".gemini", "antigravity-cli", "conversations");
+
+/** A loadability check for one listing: a conversation agy CLI can load has a database here. */
+export function cliLoadable(directory = CLI_CONVERSATIONS): (sessionId: string) => boolean {
+  let present = false;
+  try {
+    present = statSync(directory).isDirectory();
+  } catch {
+    // An unknown store layout: keep every session rather than hide them all.
+  }
+  if (!present) return () => true;
+  return (sessionId) => !/^[0-9A-Za-z-]+$/.test(sessionId) || existsSync(path.join(directory, `${sessionId}.db`));
+}
+
+export interface ArrangeOptions {
+  resolve?: RealpathResolver;
+  /** The listing process's directory: agy's stand-in for "no directory recorded". */
+  placeholderCwd?: string | null;
+  /** False for conversations agy cannot load, which would import as empty sessions. */
+  loadable?: (sessionId: string) => boolean;
+}
+
 /**
- * Decodes every cwd, keeps only sessions in `requestedCwd` (when given) and returns them newest
- * first. A kept session reports `requestedCwd` itself, the exact string the daemon matches.
+ * Decodes every cwd, keeps only loadable sessions in `requestedCwd` (when given) and returns them
+ * newest first. A kept session reports `requestedCwd` itself, the exact string the daemon matches.
  */
 export function arrangeSessions(
   sessions: readonly unknown[],
   requestedCwd: string | null,
-  resolve: RealpathResolver = realpaths,
-  /** The listing process's directory: agy's stand-in for "no directory recorded". */
-  placeholderCwd: string | null = null,
+  options: ArrangeOptions = {},
 ): JsonObject[] {
+  const resolve = options.resolve ?? realpaths;
+  const placeholderCwd = options.placeholderCwd ?? null;
+  const loadable = options.loadable ?? cliLoadable();
   const cache = new Map<string, Set<string>>();
   const target = requestedCwd ? variantsOf(requestedCwd, resolve, cache) : null;
   const placeholder = placeholderCwd ? variantsOf(placeholderCwd, resolve, cache) : null;
   const arranged: JsonObject[] = [];
   for (const session of sessions) {
     if (!isObject(session)) continue;
+    if (typeof session.sessionId === "string" && !loadable(session.sessionId)) continue;
     let cwd = typeof session.cwd === "string" ? decodeCwd(session.cwd) : undefined;
     if (cwd && placeholder && [...variantsOf(cwd, resolve, cache)].some((variant) => placeholder.has(variant))) {
       // No directory recorded: never part of a directory's list; listed under home otherwise.
@@ -132,6 +165,24 @@ export function arrangeSessions(
   return arranged.sort((left, right) => updatedAt(right) - updatedAt(left));
 }
 
+/** Fresh enough to answer without asking agy. */
+const FRESH_MS = 60_000;
+/** Still answered from memory, while a background refresh fetches a newer list. */
+const STALE_MS = 15 * 60_000;
+
+interface ListSnapshot {
+  sessions: unknown[];
+  placeholderCwd: string | null;
+  fetchedAt: number;
+}
+
+let snapshot: ListSnapshot | null = null;
+
+/** For tests: forget the shared snapshot. */
+export function resetSessionListCache(): void {
+  snapshot = null;
+}
+
 interface PendingList {
   originalId: MessageId;
   cwd: string | null;
@@ -147,24 +198,41 @@ export interface ListRelayResult {
   send: AcpStreamMessage[];
 }
 
+export interface ListRelayOptions extends ArrangeOptions {
+  /** Starts a background refresh of the shared snapshot. */
+  refresh?: () => void;
+  now?: () => number;
+}
+
 export class SessionListRelay {
   private readonly pending = new Map<MessageId, PendingList>();
-  private readonly resolve: RealpathResolver;
-  private readonly placeholderCwd: string | null;
+  private readonly options: ListRelayOptions;
   private sequence = 0;
 
-  constructor(resolve: RealpathResolver = realpaths, placeholderCwd: string | null = null) {
-    this.resolve = resolve;
-    this.placeholderCwd = placeholderCwd;
+  constructor(options: ListRelayOptions = {}) {
+    this.options = options;
   }
 
-  /** Call for every message the adapter writes. */
-  outgoing(message: AcpStreamMessage): void {
-    if (!("method" in message) || message.method !== "session/list" || !("id" in message)) return;
-    if (message.id === null) return;
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
+  /**
+   * Call for every message the adapter writes. Returns the answer to deliver right away when the
+   * shared snapshot can answer it; the request must then not reach agy.
+   */
+  outgoing(message: AcpStreamMessage): AcpStreamMessage | null {
+    if (!("method" in message) || message.method !== "session/list" || !("id" in message)) return null;
+    if (message.id === null) return null;
     const params = isObject(message.params) ? message.params : {};
     const cwd = typeof params.cwd === "string" && params.cwd.length > 0 ? params.cwd : null;
+    const age = snapshot ? this.now() - snapshot.fetchedAt : Number.POSITIVE_INFINITY;
+    if (snapshot && age < STALE_MS && params.cursor === undefined) {
+      if (age >= FRESH_MS) this.options.refresh?.();
+      return this.answer({ originalId: message.id, cwd, sessions: snapshot.sessions, pages: 1, firstResult: null }, snapshot.placeholderCwd);
+    }
     this.pending.set(message.id, { originalId: message.id, cwd, sessions: [], pages: 0, firstResult: null });
+    return null;
   }
 
   /** Returns null when the message is not an answer to a session/list this relay tracks. */
@@ -188,18 +256,83 @@ export class SessionListRelay {
       const params = entry.cwd ? { cwd: entry.cwd, cursor } : { cursor };
       return { deliver: [], send: [{ jsonrpc: "2.0", id, method: "session/list", params }] };
     }
+    snapshot = { sessions: entry.sessions, placeholderCwd: this.options.placeholderCwd ?? null, fetchedAt: this.now() };
     return { deliver: [this.answer(entry)], send: [] };
   }
 
-  private answer(entry: PendingList): AcpStreamMessage {
+  private answer(entry: PendingList, placeholderCwd = this.options.placeholderCwd ?? null): AcpStreamMessage {
     return {
       jsonrpc: "2.0",
       id: entry.originalId,
       result: {
         ...(entry.firstResult ?? {}),
-        sessions: arrangeSessions(entry.sessions, entry.cwd, this.resolve, this.placeholderCwd),
+        sessions: arrangeSessions(entry.sessions, entry.cwd, { ...this.options, placeholderCwd }),
         nextCursor: null,
       },
     };
+  }
+}
+
+let refreshing: Promise<void> | null = null;
+
+/**
+ * Fetches agy's full session list in the background into the shared snapshot. At most one runs
+ * at a time; failures only log, since the next Import dialog request fetches again.
+ */
+export function refreshSessionList(launch: ProviderLaunch, env: Readonly<Record<string, string>>): Promise<void> {
+  refreshing ??= fetchSessionList(launch, env).finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+async function fetchSessionList(launch: ProviderLaunch, env: Readonly<Record<string, string>>): Promise<void> {
+  const cwd = listWorkingDirectory();
+  const child = spawnProcess(launch.command, launch.args, { env: { ...launch.env, ...env }, cwd, stdio: "pipe" });
+  child.stderr.on("data", () => undefined);
+  child.on("error", () => undefined);
+  const waiters = new Map<number, (message: JsonObject) => void>();
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    try {
+      const message: unknown = JSON.parse(line);
+      if (isObject(message) && typeof message.id === "number") waiters.get(message.id)?.(message);
+    } catch {
+      // Not a JSON-RPC line.
+    }
+  });
+  let lastId = 0;
+  const call = (method: string, params: JsonObject) =>
+    new Promise<JsonObject>((resolve, reject) => {
+      const id = ++lastId;
+      const timer = setTimeout(() => reject(new Error(`${method} timed out`)), 30_000);
+      timer.unref();
+      waiters.set(id, (message) => {
+        clearTimeout(timer);
+        waiters.delete(id);
+        if (isObject(message.result)) resolve(message.result);
+        else reject(new Error(`${method} failed`));
+      });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+    });
+  try {
+    await call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    const sessions: unknown[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const result = await call("session/list", cursor ? { cursor } : {});
+      if (!Array.isArray(result.sessions)) throw new Error("session/list returned no sessions");
+      sessions.push(...result.sessions);
+      cursor = typeof result.nextCursor === "string" && result.nextCursor.length > 0 ? result.nextCursor : undefined;
+      pages += 1;
+    } while (cursor && pages < MAX_PAGES);
+    snapshot = { sessions, placeholderCwd: cwd, fetchedAt: Date.now() };
+  } catch (error) {
+    console.error(`[antigravity-plus] background session list failed: ${String(error)}`);
+  } finally {
+    child.stdin.end();
+    const kill = setTimeout(() => void terminateProcess(child), 3000);
+    kill.unref();
+    child.once("close", () => clearTimeout(kill));
   }
 }
