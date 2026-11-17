@@ -7,14 +7,14 @@ Antigravity+ adds a second Antigravity provider to Paseo that runs `agy acp`, th
 - Slash commands and skills such as `/goal`, `/plan`, `/compact` and your own skills appear in the composer.
 - Modes: Bypass, plus agy's own Default, Accept edits, Auto and Plan. New agents start in Bypass, where every edit and command runs without asking and outside agy's terminal sandbox. Bypass runs agy in its Default mode and the plugin approves each request agy makes; Auto and the other modes ask through Paseo permission cards. Deny rules in your agy settings still apply in every mode.
 - Paseo's MCP servers and the agent's Paseo instructions reach agy, so Antigravity agents can use Paseo's orchestration tools.
-- Subagents through Paseo. agy's own `invoke_subagent` starts subagents that Paseo cannot show or control, so it is blocked in Antigravity+ sessions and agy is told to use Paseo's `create_agent` instead. The "agy subagents" switch in the composer turns native subagents back on for one agent, which agy's `/teamwork` and `/boost` need.
+- Subagents through Paseo. agy's own `invoke_subagent` starts subagents that Paseo cannot show or control, so it is blocked in Antigravity+ sessions and agy is told to use Paseo's `create_agent` instead. agy commands that rely on native subagents, such as `/teamwork` and `/boost`, do not work here; use the agy terminal UI for them.
 - The context window meter in the composer, from agy's usage updates.
 - Steering: a message sent during a running turn joins that turn instead of interrupting it.
 - Model and thinking level as separate choices, with each model's own levels, such as XHigh for Gemini 4 Hydrogen.
 
 ## Setup
 
-Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, linked into agy's global plugins folder (`~/.gemini/config/plugins/`). Its hook acts only on agy processes started by Antigravity+, which carry `ANTIGRAVITY_PLUS=1`; anywhere else it answers "allow", and agy does not ask permission for `invoke_subagent` on its own, so other agy sessions behave as before. Without the companion plugin, agy is still told to prefer Paseo agents but nothing enforces it.
+Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, linked into agy's global plugins folder (`~/.gemini/config/plugins/`). Its hook blocks `invoke_subagent` only in agy processes started by Antigravity+, which carry `ANTIGRAVITY_PLUS=1`; anywhere else it answers "allow", and agy does not ask permission for `invoke_subagent` on its own, so other agy sessions behave as before. Without the companion plugin, agy is still told to prefer Paseo agents but nothing enforces it.
 
 ## Quota
 

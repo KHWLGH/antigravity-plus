@@ -1,7 +1,6 @@
 import type {
   ProviderMode,
   ProviderModel,
-  ProviderOptionControl,
   ProviderThinkingOption,
 } from "@getpaseo/plugin/server/provider";
 
@@ -26,17 +25,11 @@ export function withBypassMode(modes: readonly ProviderMode[]): ProviderMode[] {
   return [...modes, BYPASS_MODE];
 }
 
-/** Composer switch for agy's own invoke_subagent; off sends subagents through Paseo. */
-export const SUBAGENT_OPTION = "agySubagents";
-export const SUBAGENT_CONTROL: ProviderOptionControl = {
-  type: "toggle",
-  key: SUBAGENT_OPTION,
-  label: "agy subagents",
-  description:
-    "Let agy start its own subagents, which Paseo cannot show or control. Needed for /teamwork and /boost. Off: agy is told to start Paseo agents instead.",
-  icon: "Network",
-  defaultValue: false,
-};
+/**
+ * Agents created while Antigravity+ had an "agy subagents" switch (2026-11-17) still carry this
+ * option in Paseo's saved config. The adapter rejects unknown settings, so it is dropped.
+ */
+export const LEGACY_SUBAGENT_OPTION = "agySubagents";
 
 const LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const LEVEL_LABELS: Record<(typeof LEVELS)[number], string> = {

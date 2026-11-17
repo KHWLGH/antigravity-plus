@@ -71,17 +71,13 @@ function fakeInner() {
 
 function wrapped() {
   const inner = fakeInner();
-  const flags: Array<[string, boolean]> = [];
   const events: ProviderEvent[] = [];
   const connection = wrapConnection(inner.connection, ["prompt.steer"], {
     modelIds: () => ["gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh", "gpt-oss-120b-medium"],
-    setSubagentsAllowed: async (id, allowed) => {
-      flags.push([id, allowed]);
-    },
     env: { ANTIGRAVITY_PLUS: "1" },
   });
   connection.onEvent((event) => events.push(event));
-  return { inner, flags, events, connection };
+  return { inner, events, connection };
 }
 
 const openInput = (config: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
@@ -128,40 +124,27 @@ test("a resumed session keeps agy's mode, and agy leaving Default ends Bypass", 
   assert.equal(config.config.mode, "plan");
 });
 
-test("the agy subagents switch never reaches the adapter and is applied to the hook flag", async () => {
-  const { inner, flags, events, connection } = wrapped();
-  await connection.send(openInput({ providerOptions: { agySubagents: true }, settings: { agySubagents: true } }));
+test("the retired agy subagents option is dropped and no switch is offered", async () => {
+  const { inner, events, connection } = wrapped();
+  await connection.send(openInput({ providerOptions: { agySubagents: false }, settings: { agySubagents: false } }));
   const sent = inner.sent[0] as Extract<ProviderInput, { type: "session.open" }>;
   assert.deepEqual(sent.config.providerOptions, {});
   assert.deepEqual(sent.config.settings, {});
-  inner.fire({
-    type: "session.opened",
-    requestId: "o1",
-    sessionId: "s1",
-    capabilities: [],
-    restoration: "core",
-    persistence: { version: 1, data: { sessionId: "conv-1" } },
-  } as unknown as ProviderEvent);
-  assert.deepEqual(flags.at(-1), ["conv-1", true]);
   inner.fire({ type: "session.ready", requestId: "o1", sessionId: "s1" } as ProviderEvent);
   inner.fire(innerConfig("default"));
+  const config = events.at(-1) as ReturnType<typeof innerConfig> & { config: { controls?: unknown[] } };
+  assert.equal(config.config.controls, undefined);
   await new Promise((resolve) => setTimeout(resolve, 5));
-  // Only the switch changes: answered here, nothing forwarded.
+  // A configure carrying only the retired option is answered here, nothing forwarded.
   await connection.send({
     type: "session.configure",
     requestId: "c1",
     sessionId: "s1",
-    changes: { providerOptions: { agySubagents: false } },
+    changes: { providerOptions: { agySubagents: true } },
   } as ProviderInput);
   await new Promise((resolve) => setTimeout(resolve, 5));
   assert.equal(inner.sent.length, 1);
-  assert.deepEqual(flags.at(-1), ["conv-1", false]);
-  const last = events.at(-1);
-  assert.equal(last?.type, "request.completed");
-  const config = events.at(-2) as ReturnType<typeof innerConfig> & {
-    config: { providerOptions: Record<string, unknown> };
-  };
-  assert.equal(config.config.providerOptions.agySubagents, false);
+  assert.equal(events.at(-1)?.type, "request.completed");
 });
 
 test("switching to Bypass sends Default to agy and rolls back if the adapter fails", async () => {
@@ -381,7 +364,6 @@ test("before agy listed its models, an open with a thinking level asks for the l
   const seen: ProviderEvent[] = [];
   const connection = wrapConnection(inner.connection, [], {
     modelIds: () => ids,
-    setSubagentsAllowed: async () => {},
   });
   connection.onEvent((event) => seen.push(event));
   const opened = connection.send(openInput({ model: "gpt-oss-120b-medium", thinkingOption: "medium" }));

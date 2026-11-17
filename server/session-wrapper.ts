@@ -13,8 +13,7 @@ import {
   BYPASS_MODE_ID,
   BYPASS_NATIVE_MODE,
   DEFAULT_MODE,
-  SUBAGENT_CONTROL,
-  SUBAGENT_OPTION,
+  LEGACY_SUBAGENT_OPTION,
   thinkingLevels,
   withBypassMode,
   withModelThinking,
@@ -42,16 +41,12 @@ export const launchContext = new AsyncLocalStorage<LaunchContext>();
 export interface WrapperOptions {
   /** Effort-suffixed model ids agy last reported, for per-model thinking levels. */
   modelIds(): readonly string[];
-  /** Records the agent's "agy subagents" switch for the companion agy hook. */
-  setSubagentsAllowed(conversationId: string, allowed: boolean): Promise<void>;
   /** Extra environment for every session's agy process. */
   env?: Readonly<Record<string, string>>;
 }
 
 interface SessionState {
   policy: PermissionPolicy;
-  subagents: boolean;
-  conversationId: string | null;
   /** The adapter's last config snapshot, before this wrapper's additions. */
   innerConfig: ProviderConfigState | null;
   stream: AgyStream | null;
@@ -80,11 +75,11 @@ function promptText(content: AcpContentBlock[]): string {
     .join("\n");
 }
 
-/** Removes this plugin's own option key; the adapter would reject it as an unknown setting. */
-function withoutOwnOption<T extends Options | undefined>(options: T): { rest: T; value: unknown } {
-  if (!options || !(SUBAGENT_OPTION in options)) return { rest: options, value: undefined };
-  const { [SUBAGENT_OPTION]: value, ...rest } = options;
-  return { rest: rest as T, value };
+/** Drops the retired "agy subagents" option; the adapter would reject it as an unknown setting. */
+function withoutLegacyOption<T extends Options | undefined>(options: T): T {
+  if (!options || !(LEGACY_SUBAGENT_OPTION in options)) return options;
+  const { [LEGACY_SUBAGENT_OPTION]: _retired, ...rest } = options;
+  return rest as T;
 }
 
 function hasChanges(changes: ProviderConfigChanges): boolean {
@@ -101,7 +96,6 @@ function hasChanges(changes: ProviderConfigChanges): boolean {
  * Wraps the adapter's single connection to add what it lacks for agy:
  * - each session's agy runs with that session's env;
  * - Bypass, a mode agy does not have: agy runs in Default and the stream approves everything;
- * - the "agy subagents" composer switch, applied through the companion agy hook;
  * - per-model thinking levels in config snapshots;
  * - steering, through the session's agy stream.
  */
@@ -121,7 +115,7 @@ export function wrapConnection(
   const opening = new Map<string, Promise<void>>();
   const openRequests = new Map<string, { sessionId: string; release: () => void }>();
   /** Configure requests forwarded to the adapter, with the state to restore if they fail. */
-  const configuring = new Map<string, { sessionId: string; bypass: boolean; subagents: boolean }>();
+  const configuring = new Map<string, { sessionId: string; bypass: boolean }>();
 
   const emit = (event: ProviderEvent) => {
     for (const listener of listeners) listener(event);
@@ -151,13 +145,6 @@ export function wrapConnection(
     } else if ("sessionId" in input) {
       emit({ type: "session.runtime_failed", sessionId: input.sessionId, error: failure });
     }
-  }
-
-  function syncSubagents(state: SessionState): void {
-    if (!state.conversationId) return;
-    options.setSubagentsAllowed(state.conversationId, state.subagents).catch((error) => {
-      console.error(`[antigravity-plus] could not update the subagent switch: ${String(error)}`);
-    });
   }
 
   /** Catalog requests this wrapper sends itself; their events never reach Paseo. */
@@ -196,14 +183,11 @@ export function wrapConnection(
   function present(state: SessionState, config: ProviderConfigState): ProviderConfigState {
     // Bypass holds only while agy stays in the mode it runs on; agy can change mode itself.
     if (config.mode && config.mode !== BYPASS_NATIVE_MODE) state.policy.bypass = false;
-    const controls = (config.controls ?? []).filter((control) => control.key !== SUBAGENT_OPTION);
     return {
       ...config,
       mode: state.policy.bypass ? BYPASS_MODE_ID : config.mode,
       modes: withBypassMode(config.modes),
       models: withModelThinking(config.models, options.modelIds()),
-      controls: [...controls, SUBAGENT_CONTROL],
-      providerOptions: { ...(config.providerOptions ?? {}), [SUBAGENT_OPTION]: state.subagents },
     };
   }
 
@@ -228,21 +212,12 @@ export function wrapConnection(
         const state = sessions.get(pending.sessionId);
         if (state && event.type === "request.failed") {
           state.policy.bypass = pending.bypass;
-          state.subagents = pending.subagents;
-          syncSubagents(state);
           publishConfig(pending.sessionId, state);
         }
       }
     }
     const state = "sessionId" in event ? sessions.get(event.sessionId) : undefined;
     if (state && event.type === "session.opened") {
-      const data = event.persistence?.data;
-      const conversationId =
-        typeof data === "object" && data !== null && !Array.isArray(data) && typeof data.sessionId === "string"
-          ? data.sessionId
-          : null;
-      state.conversationId = conversationId;
-      syncSubagents(state);
       if (steering) event = { ...event, capabilities: [...event.capabilities, STEER] };
     } else if (state && event.type === "session.config") {
       state.innerConfig = event.config;
@@ -250,25 +225,17 @@ export function wrapConnection(
     } else if (state && event.type === "session.turn") {
       state.activeTurnId = event.state === "started" ? event.turnId : null;
     } else if (state && event.type === "session.closed") {
-      if (state.conversationId) {
-        options.setSubagentsAllowed(state.conversationId, false).catch(() => undefined);
-      }
       sessions.delete(event.sessionId);
     }
     emit(event);
   });
 
   function open(input: SessionOpen): Promise<void> {
-    const ownOptions = withoutOwnOption(input.config.providerOptions);
-    const ownSettings = withoutOwnOption(input.config.settings);
-    const subagents = ownOptions.value === true || ownSettings.value === true;
     // A new session without a mode starts in the default; a resumed one keeps agy's own.
     const requestedMode = input.config.mode ?? (input.persistence ? undefined : DEFAULT_MODE);
     const bypass = requestedMode === BYPASS_MODE_ID;
     const state: SessionState = {
       policy: { bypass },
-      subagents,
-      conversationId: null,
       innerConfig: null,
       stream: null,
       activeTurnId: null,
@@ -293,8 +260,8 @@ export function wrapConnection(
           ...input.config,
           mode: bypass ? BYPASS_NATIVE_MODE : requestedMode,
           thinkingOption: supportsThinking(input.config.model) ? input.config.thinkingOption : undefined,
-          providerOptions: ownOptions.rest,
-          settings: ownSettings.rest ?? {},
+          providerOptions: withoutLegacyOption(input.config.providerOptions),
+          settings: withoutLegacyOption(input.config.settings) ?? {},
         },
       };
       await launchContext.run(context, () => inner.send(prepared));
@@ -309,15 +276,11 @@ export function wrapConnection(
   function configure(input: SessionConfigure): Promise<void> {
     const state = sessions.get(input.sessionId);
     if (!state) return inner.send(input);
-    const previous = { bypass: state.policy.bypass, subagents: state.subagents };
-    const ownOptions = withoutOwnOption(input.changes.providerOptions);
-    const ownSettings = withoutOwnOption(input.changes.settings);
-    const switched = ownOptions.value !== undefined ? ownOptions.value : ownSettings.value;
-    if (switched !== undefined) state.subagents = switched === true;
+    const previous = { bypass: state.policy.bypass };
     const changes: ProviderConfigChanges = {
       ...input.changes,
-      providerOptions: ownOptions.rest,
-      settings: ownSettings.rest,
+      providerOptions: withoutLegacyOption(input.changes.providerOptions),
+      settings: withoutLegacyOption(input.changes.settings),
     };
     if (changes.thinkingOption && !supportsThinking(changes.model ?? state.innerConfig?.model)) {
       changes.thinkingOption = undefined;
@@ -328,7 +291,6 @@ export function wrapConnection(
       state.policy.bypass = target === BYPASS_MODE_ID;
       changes.mode = state.policy.bypass ? BYPASS_NATIVE_MODE : target;
     }
-    syncSubagents(state);
     if (!hasChanges(changes)) {
       // Answer after send() returns, as the adapter does, so the caller is already waiting.
       setTimeout(() => {
@@ -393,11 +355,6 @@ export function wrapConnection(
     },
     async close() {
       await inner.close();
-      await Promise.allSettled(
-        [...sessions.values()]
-          .filter((state) => state.conversationId)
-          .map((state) => options.setSubagentsAllowed(state.conversationId as string, false)),
-      );
       sessions.clear();
       listeners.clear();
     },

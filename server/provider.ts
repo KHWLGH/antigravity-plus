@@ -9,7 +9,7 @@ import type {
 import { latestModelIds, openAgyStream } from "./agy-stream.ts";
 import { DEFAULT_MODE, withBypassMode, withModelThinking } from "./catalog.ts";
 import { launchContext, wrapConnection } from "./session-wrapper.ts";
-import { AGY_ENV, SUBAGENT_GUIDANCE, setSubagentsAllowed } from "./subagents.ts";
+import { AGY_ENV, SUBAGENT_GUIDANCE } from "./subagents.ts";
 
 export const PROVIDER_ID = "antigravity-plus";
 const LABEL = "Antigravity+";
@@ -111,7 +111,6 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
       }).connect(request);
       return wrapConnection(inner, request.capabilities, {
         modelIds: latestModelIds,
-        setSubagentsAllowed,
         env: AGY_ENV,
       });
     },
