@@ -272,7 +272,7 @@ test("publishes one neutral window for the shared Google model pool", () => {
   const windows = googlePoolWindows(models, summary);
   assert.equal(windows.length, 1);
   assert.equal(windows[0].id, "google-models");
-  assert.equal(windows[0].label, "Gemini Hydrogen/Flash");
+  assert.equal(windows[0].label, "Gemini");
   assert.equal(windows[0].usedPct, 6.6);
 });
 
