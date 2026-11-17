@@ -128,44 +128,35 @@ export function summaryWindows(summary: QuotaSummary): UsageWindow[] {
 
 /**
  * Google models are absent from the quota summary today. fetchAvailableModels reports a
- * remaining fraction and reset per model with no window length, and every Google model
- * shares one pool, so publish one neutral window per distinct pool.
+ * remaining fraction and reset per model with no window length; today every Google agent
+ * model shares one pool. Publish one window with a stable ID showing the most depleted
+ * Google model, so the ID cannot drift when pools split or merge as quota is used.
  */
 export function googlePoolWindows(models: AvailableModels, summary: QuotaSummary): UsageWindow[] {
   const summaryCoversGoogle = summary.groups.some((group) =>
     /gemini|google/i.test(`${group.displayName} ${group.description ?? ""}`),
   );
   if (summaryCoversGoogle) return [];
-  const pools = new Map<string, { remaining: number; reset: string; modelIds: string[] }>();
-  for (const [modelId, model] of Object.entries(models.models)) {
+  let lowest: { remaining: number; reset: string } | null = null;
+  for (const model of Object.values(models.models)) {
     const quota = model.quotaInfo;
     if (model.modelProvider !== "MODEL_PROVIDER_GOOGLE") continue;
     // Models without a reset are tab-completion helpers, not agent models.
     if (!quota?.resetTime || typeof quota.remainingFraction !== "number") continue;
-    const key = `${quota.remainingFraction}|${quota.resetTime}`;
-    const pool = pools.get(key) ?? {
-      remaining: quota.remainingFraction,
-      reset: quota.resetTime,
-      modelIds: [],
-    };
-    pool.modelIds.push(modelId);
-    pools.set(key, pool);
+    if (lowest === null || quota.remainingFraction < lowest.remaining) {
+      lowest = { remaining: quota.remainingFraction, reset: quota.resetTime };
+    }
   }
-  const sorted = [...pools.values()].sort((left, right) => right.modelIds.length - left.modelIds.length);
-  return sorted.map((pool, index) => {
-    const used = usedPct(pool.remaining);
-    const suffix = index === 0 ? "" : ` (${[...pool.modelIds].sort()[0]})`;
-    return windowFromReportedDuration({
+  if (lowest === null) return [];
+  const used = usedPct(lowest.remaining);
+  return [
+    windowFromReportedDuration({
       durationSeconds: null,
-      unknown: {
-        id: index === 0 ? "google-models" : `google-models-${[...pool.modelIds].sort()[0]}`,
-        label: `Google models${suffix}`,
-        shortLabel: "Google",
-      },
+      unknown: { id: "google-models", label: "Google models", shortLabel: "Google" },
       utilizationPct: used,
-      resetsAt: pool.reset,
-      summary: index === 0,
+      resetsAt: lowest.reset,
+      summary: true,
       tone: toneFromUsedPct(used),
-    });
-  });
+    }),
+  ];
 }

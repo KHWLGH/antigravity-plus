@@ -70,8 +70,19 @@ function isExpired(credential: Credential): boolean {
  * Lets agy refresh its own login by running a cheap agy command. The plugin
  * never reads the refresh token or writes the Keychain; agy does both itself.
  */
-async function refreshThroughAgy(): Promise<void> {
-  const candidates = ["agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy"];
+let refreshing: Promise<void> | null = null;
+
+function refreshThroughAgy(): Promise<void> {
+  // Concurrent fetches share one agy run.
+  refreshing ??= runAgyRefresh().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+async function runAgyRefresh(): Promise<void> {
+  const home = process.env.HOME ?? "";
+  const candidates = ["agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy", `${home}/.local/bin/agy`];
   for (const command of candidates) {
     try {
       await execCommand(command, ["models"], { env: process.env, timeout: REFRESH_TIMEOUT_MS });
@@ -120,38 +131,52 @@ async function fetchReport(): Promise<UsageReport> {
       refreshedBy: "agy",
     });
   }
-  const token = credential.token.access_token;
   try {
-    const [summaryRaw, modelsRaw, tierRaw] = await Promise.all([
-      post("retrieveUserQuotaSummary", token, {}),
-      post("fetchAvailableModels", token, {}),
-      post("loadCodeAssist", token, { metadata: { ideType: "ANTIGRAVITY", pluginType: "GEMINI" } }).catch(
-        () => null,
-      ),
-    ]);
-    const summary = quotaSummarySchema.parse(summaryRaw);
-    const models = availableModelsSchema.parse(modelsRaw);
-    const tier = z
-      .object({
-        paidTier: z.object({ name: z.string() }).optional(),
-        currentTier: z.object({ name: z.string() }).optional(),
-      })
-      .safeParse(tierRaw);
-    const windows = [...summaryWindows(summary), ...googlePoolWindows(models, summary)];
-    if (windows.length === 0) {
-      return unavailable({ kind: "no_quota", detail: "Antigravity reported no quota windows" });
-    }
-    return {
-      status: "available",
-      planLabel: tier.success ? (tier.data.paidTier?.name ?? tier.data.currentTier?.name) : undefined,
-      windows,
-    };
+    return await requestReport(credential.token.access_token);
+  } catch (error) {
+    if (!(error instanceof HttpRejected)) throw error;
+  }
+  // Rejected before the stored expiry (revoked token, clock skew): let agy refresh once.
+  await refreshThroughAgy();
+  const refreshed = await readCredential();
+  if (refreshed.token.access_token === credential.token.access_token) {
+    return unavailable({ kind: "rejected", status: 401, refreshedBy: "agy" });
+  }
+  try {
+    return await requestReport(refreshed.token.access_token);
   } catch (error) {
     if (error instanceof HttpRejected) {
       return unavailable({ kind: "rejected", status: error.status, refreshedBy: "agy" });
     }
     throw error;
   }
+}
+
+async function requestReport(token: string): Promise<UsageReport> {
+  const [summaryRaw, modelsRaw, tierRaw] = await Promise.all([
+    post("retrieveUserQuotaSummary", token, {}),
+    post("fetchAvailableModels", token, {}),
+    post("loadCodeAssist", token, { metadata: { ideType: "ANTIGRAVITY", pluginType: "GEMINI" } }).catch(
+      () => null,
+    ),
+  ]);
+  const summary = quotaSummarySchema.parse(summaryRaw);
+  const models = availableModelsSchema.parse(modelsRaw);
+  const tier = z
+    .object({
+      paidTier: z.object({ name: z.string() }).optional(),
+      currentTier: z.object({ name: z.string() }).optional(),
+    })
+    .safeParse(tierRaw);
+  const windows = [...summaryWindows(summary), ...googlePoolWindows(models, summary)];
+  if (windows.length === 0) {
+    return unavailable({ kind: "no_quota", detail: "Antigravity reported no quota windows" });
+  }
+  return {
+    status: "available",
+    planLabel: tier.success ? (tier.data.paidTier?.name ?? tier.data.currentTier?.name) : undefined,
+    windows,
+  };
 }
 
 async function discoverAccounts(scope: UsageScope): Promise<UsageAccount[]> {
@@ -166,7 +191,7 @@ async function discoverAccounts(scope: UsageScope): Promise<UsageAccount[]> {
   } catch {
     return [];
   }
-  const email = credential.id_token_email;
+  const email = credential.id_token_email?.trim() || undefined;
   return [
     {
       key: hashAccountKey(`antigravity:${email ?? KEYCHAIN_SERVICE}`),

@@ -23,5 +23,5 @@ The quota source reads agy's Google login from the macOS Keychain (service `gemi
 ## Limits
 
 - Antigravity+ is a separate provider. Agents created with the built-in Antigravity provider stay on it; import their conversations to move them.
-- Background commands: when agy moves a long command to the background it ends the turn and resumes on its own later, so Paseo can show the agent idle while that command runs.
+- Background commands: when agy moves a long-running command to the background, its turn can end before the command finishes, so Paseo shows the agent idle while that command still runs.
 - Shell, read and search tools show as generic tool rows with their input and output; file edits show as diffs.

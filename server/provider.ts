@@ -7,8 +7,8 @@ import type {
   ProviderRegistration,
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
-import { openAgyStream, type AgyStream } from "./agy-stream.ts";
-import { createMultiplexedConnection } from "./multiplex.ts";
+import { openAgyStream } from "./agy-stream.ts";
+import { launchContext, wrapConnection } from "./multiplex.ts";
 
 export const PROVIDER_ID = "antigravity-plus";
 const LABEL = "Antigravity+";
@@ -94,26 +94,21 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
     async connect(request) {
       const launch = request.launch;
       if (!launch) throw new Error("The daemon must supply the agy launch command");
-      return createMultiplexedConnection(
-        async (env) => {
-          // The adapter opens a capability probe first and the session's agy process last,
-          // so the newest stream is the one running prompts.
-          let latest: AgyStream | null = null;
-          const connection = await runAcpProvider({
-            id: PROVIDER_ID,
-            label: LABEL,
-            icon: "icon.svg",
-            connector: () => {
-              latest = openAgyStream(launch, env);
-              return latest.stream;
-            },
-            transformers: [defaultModeTransformer],
-          }).connect(request);
-          return { connection, steer: (content) => latest?.steer(content) ?? false };
+      const inner = await runAcpProvider({
+        id: PROVIDER_ID,
+        label: LABEL,
+        icon: "icon.svg",
+        connector: () => {
+          const context = launchContext.getStore();
+          const agy = openAgyStream(launch, context?.env ?? {});
+          context?.register(agy);
+          return agy.stream;
         },
-        request.capabilities,
-        withDefaultMode,
-      );
+        transformers: [defaultModeTransformer],
+        // agy sends commands and skills right after session/new|load; wait so the composer has them.
+        acpOptions: { waitForInitialCommands: true },
+      }).connect(request);
+      return wrapConnection(inner, request.capabilities, withDefaultMode);
     },
   };
 }

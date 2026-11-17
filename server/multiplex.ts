@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   ProviderConnection,
   ProviderContent,
@@ -5,31 +6,25 @@ import type {
   ProviderInput,
   ProviderPrompt,
 } from "@getpaseo/plugin/server/provider";
-import type { AcpContentBlock } from "./agy-stream.ts";
-
-export interface InnerConnection {
-  connection: ProviderConnection;
-  /** Adds content to the running agy prompt; false when nothing is running. */
-  steer(content: AcpContentBlock[]): boolean;
-}
-
-/** Opens one inner ACP connection whose agy processes run with `env`. */
-export type InnerConnectionFactory = (env: Record<string, string>) => Promise<InnerConnection>;
+import type { AcpContentBlock, AgyStream } from "./agy-stream.ts";
 
 type SessionOpen = Extract<ProviderInput, { type: "session.open" }>;
 type SessionPrompt = Extract<ProviderInput, { type: "session.prompt" }>;
 
-interface SessionEntry {
-  inner: Promise<InnerConnection>;
-  retired: boolean;
-  activeTurnId: string | null;
+/** What a connector call needs to know about the session.open that triggered it. */
+export interface LaunchContext {
+  env: Record<string, string>;
+  register(stream: AgyStream): void;
 }
+
+/**
+ * Paseo's ACP adapter calls its connector without arguments. It does so from the promise chain
+ * that `send(session.open)` starts, so AsyncLocalStorage carries the session's context into the
+ * connector. Catalog, listing and the connect-time probe run outside any context.
+ */
+export const launchContext = new AsyncLocalStorage<LaunchContext>();
 
 const STEER = "prompt.steer";
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** Same conversion as Paseo's ACP adapter: text and images pass through, attachments as JSON. */
 export function toAcpContent(prompt: ProviderPrompt): AcpContentBlock[] {
@@ -52,35 +47,42 @@ function promptText(content: AcpContentBlock[]): string {
 }
 
 /**
- * Paseo's ACP adapter takes a connector without arguments, so a connector cannot see the
- * session's environment. Give every session its own inner connection, created with that
- * session's env, and keep one shared inner connection for catalog and session listing.
- * Routing is by sessionId; the inner adapter does all protocol work except steering, which
- * the adapter does not offer and this layer adds through the agy stream.
+ * Wraps the adapter's single connection to (1) launch each session's agy with that session's
+ * env and (2) add steering, which the adapter does not offer, through the session's agy stream.
  */
-export async function createMultiplexedConnection(
-  factory: InnerConnectionFactory,
+export function wrapConnection(
+  inner: ProviderConnection,
   requested: readonly string[],
   prepareOpen: (input: SessionOpen) => SessionOpen = (input) => input,
-): Promise<ProviderConnection> {
-  const listeners = new Set<(event: ProviderEvent) => void>();
-  const sessions = new Map<string, SessionEntry>();
+): ProviderConnection {
   const steering = requested.includes(STEER);
-  let closed = false;
+  const streams = new Map<string, AgyStream>();
+  const activeTurns = new Map<string, string>();
+  const listeners = new Set<(event: ProviderEvent) => void>();
+  /**
+   * The adapter emits session.ready before it registers the session, so an input sent in
+   * reaction to session.ready can hit "Unknown session". Hold a session's inputs until one
+   * macrotask after its open settles; chaining on one promise keeps their order.
+   */
+  const opening = new Map<string, Promise<void>>();
+  const openRequests = new Map<string, { sessionId: string; release: () => void }>();
 
   const emit = (event: ProviderEvent) => {
-    if (closed) return;
     for (const listener of listeners) listener(event);
   };
 
-  const shared = await factory({});
-  shared.connection.onEvent(emit);
-  const capabilities = steering
-    ? [...shared.connection.capabilities, STEER]
-    : [...shared.connection.capabilities];
+  function settleOpen(requestId: string): void {
+    const pending = openRequests.get(requestId);
+    if (!pending) return;
+    openRequests.delete(requestId);
+    setTimeout(() => {
+      opening.delete(pending.sessionId);
+      pending.release();
+    }, 0);
+  }
 
   function fail(input: ProviderInput, error: unknown): void {
-    const failure = { message: describe(error) };
+    const failure = { message: error instanceof Error ? error.message : String(error) };
     if (input.type === "session.prompt") {
       emit({
         type: "session.prompt_result",
@@ -95,118 +97,91 @@ export async function createMultiplexedConnection(
     }
   }
 
-  function retire(sessionId: string): void {
-    const entry = sessions.get(sessionId);
-    if (!entry || entry.retired) return;
-    entry.retired = true;
-    sessions.delete(sessionId);
-    // Let the inner adapter finish publishing the events of the current operation first.
-    setTimeout(() => {
-      void entry.inner.then(({ connection }) => connection.close()).catch(() => undefined);
-    }, 0);
-  }
-
-  function observe(entry: SessionEntry, input: SessionOpen, event: ProviderEvent): void {
-    if (event.type === "session.opened" && event.sessionId === input.sessionId && steering) {
-      event = { ...event, capabilities: [...event.capabilities, STEER] };
+  inner.onEvent((event) => {
+    if ((event.type === "session.ready" || event.type === "request.failed") && event.requestId) {
+      settleOpen(event.requestId);
     }
-    if (event.type === "session.turn" && event.sessionId === input.sessionId) {
-      entry.activeTurnId = event.state === "started" ? event.turnId : null;
+    if (event.type === "session.opened" && steering) {
+      event = { ...event, capabilities: [...event.capabilities, STEER] };
+    } else if (event.type === "session.turn") {
+      if (event.state === "started") activeTurns.set(event.sessionId, event.turnId);
+      else activeTurns.delete(event.sessionId);
+    } else if (event.type === "session.closed") {
+      streams.delete(event.sessionId);
+      activeTurns.delete(event.sessionId);
     }
     emit(event);
-    if (event.type === "session.closed" && event.sessionId === input.sessionId) {
-      retire(input.sessionId);
-    } else if (event.type === "request.failed" && event.requestId === input.requestId) {
-      retire(input.sessionId);
-    }
+  });
+
+  function steer(input: SessionPrompt): boolean {
+    const turnId = activeTurns.get(input.sessionId);
+    const stream = streams.get(input.sessionId);
+    const content = toAcpContent(input.prompt);
+    if (!turnId || !stream?.steer(content)) return false;
+    emit({
+      type: "timeline.item",
+      sessionId: input.sessionId,
+      item: {
+        type: "user_message",
+        id: input.prompt.clientMessageId,
+        clientMessageId: input.prompt.clientMessageId,
+        text: promptText(content),
+      },
+    });
+    emit({
+      type: "session.prompt_result",
+      sessionId: input.sessionId,
+      clientMessageId: input.prompt.clientMessageId,
+      result: { type: "steer", turnId },
+    });
+    return true;
   }
 
-  function open(input: SessionOpen): void {
-    const prepared = prepareOpen(input);
-    const entry: SessionEntry = {
-      retired: false,
-      activeTurnId: null,
-      inner: factory(prepared.config.env ?? {}).then((inner) => {
-        inner.connection.onEvent((event) => observe(entry, input, event));
-        return inner;
-      }),
-    };
-    sessions.set(input.sessionId, entry);
-    entry.inner
-      .then(({ connection }) => connection.send(prepared))
-      .catch((error) => {
-        retire(input.sessionId);
-        fail(input, error);
-      });
-  }
-
-  function prompt(entry: SessionEntry, input: SessionPrompt, inner: InnerConnection): Promise<void> {
-    if (input.prompt.delivery === "steer") {
-      const content = toAcpContent(input.prompt);
-      const turnId = entry.activeTurnId;
-      if (turnId && inner.steer(content)) {
-        emit({
-          type: "timeline.item",
-          sessionId: input.sessionId,
-          item: {
-            type: "user_message",
-            id: input.prompt.clientMessageId,
-            clientMessageId: input.prompt.clientMessageId,
-            text: promptText(content),
-          },
-        });
-        emit({
-          type: "session.prompt_result",
-          sessionId: input.sessionId,
-          clientMessageId: input.prompt.clientMessageId,
-          result: { type: "steer", turnId },
-        });
-        return Promise.resolve();
-      }
+  function route(input: ProviderInput): Promise<void> {
+    if (input.type === "session.prompt" && input.prompt.delivery === "steer") {
+      if (steer(input)) return Promise.resolve();
       // Nothing is running any more: deliver it as an ordinary prompt.
-      return inner.connection.send({ ...input, prompt: { ...input.prompt, delivery: "auto" } });
+      return inner.send({ ...input, prompt: { ...input.prompt, delivery: "auto" } });
     }
-    return inner.connection.send(input);
+    return inner.send(input);
   }
 
   return {
-    version: shared.connection.version,
-    capabilities,
-    async send(input) {
-      if (closed) throw new Error("Antigravity+ connection is closed");
+    version: inner.version,
+    capabilities: steering ? [...inner.capabilities, STEER] : [...inner.capabilities],
+    send(input) {
       if (input.type === "session.open") {
-        if (sessions.has(input.sessionId)) {
-          throw new Error(`Session already exists: ${input.sessionId}`);
+        const prepared = prepareOpen(input);
+        // A reopened session replaces its previous stream when the new one starts.
+        const context: LaunchContext = {
+          env: { ...(prepared.config.env ?? {}) },
+          register: (stream) => streams.set(input.sessionId, stream),
+        };
+        let release = () => {};
+        opening.set(input.sessionId, new Promise<void>((resolve) => (release = resolve)));
+        openRequests.set(input.requestId, { sessionId: input.sessionId, release });
+        try {
+          return launchContext.run(context, () => inner.send(prepared));
+        } catch (error) {
+          settleOpen(input.requestId);
+          throw error;
         }
-        open(input);
-        return;
       }
-      if (!("sessionId" in input)) {
-        await shared.connection.send(input);
-        return;
+      const gate = "sessionId" in input ? opening.get(input.sessionId) : undefined;
+      if (gate) {
+        void gate.then(() => route(input)).catch((error) => fail(input, error));
+        return Promise.resolve();
       }
-      const entry = sessions.get(input.sessionId);
-      if (!entry) throw new Error(`Unknown Antigravity+ session: ${input.sessionId}`);
-      // Callbacks on one promise run in registration order, so per-session input order holds.
-      entry.inner
-        .then((inner) =>
-          input.type === "session.prompt" ? prompt(entry, input, inner) : inner.connection.send(input),
-        )
-        .catch((error) => fail(input, error));
+      return route(input);
     },
     onEvent(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
     async close() {
-      if (closed) return;
-      closed = true;
-      const entries = [...sessions.values()];
-      sessions.clear();
-      await Promise.allSettled([
-        shared.connection.close(),
-        ...entries.map((entry) => entry.inner.then(({ connection }) => connection.close())),
-      ]);
+      await inner.close();
+      streams.clear();
+      activeTurns.clear();
       listeners.clear();
     },
   };

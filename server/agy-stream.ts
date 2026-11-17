@@ -194,12 +194,18 @@ export function openAgyStream(launch: ProviderLaunch, env: Record<string, string
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
   });
   let stopping = false;
+  let exited = false;
+  child.once("close", () => {
+    exited = true;
+  });
   const stop = () => {
     if (stopping) return;
     stopping = true;
+    if (exited) return;
     // End stdin for a graceful shutdown so agy can finish saving the conversation.
     child.stdin.end();
     const kill = setTimeout(() => void terminateProcess(child), 3000);
+    kill.unref();
     child.once("close", () => clearTimeout(kill));
   };
   const write = (message: AcpStreamMessage) =>
@@ -232,6 +238,7 @@ export function openAgyStream(launch: ProviderLaunch, env: Record<string, string
         }
       });
       child.once("close", (code, signal) => {
+        lines.close();
         if (!stopping && stderrTail.trim()) {
           console.error(
             `[antigravity-plus] agy acp exited (${signal ?? code}): ${stderrTail.trim().slice(-800)}`,
@@ -259,7 +266,7 @@ export function openAgyStream(launch: ProviderLaunch, env: Record<string, string
     },
     abort() {
       stopping = true;
-      void terminateProcess(child);
+      if (!exited) void terminateProcess(child);
     },
   });
   return {
