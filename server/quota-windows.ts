@@ -50,7 +50,8 @@ export type AvailableModels = z.infer<typeof availableModelsSchema>;
 
 function usedPct(remainingFraction: number | undefined): number | null {
   if (typeof remainingFraction !== "number" || !Number.isFinite(remainingFraction)) return null;
-  return Math.min(100, Math.max(0, (1 - remainingFraction) * 100));
+  // One decimal: the API's six-digit fractions print as float noise in the CLI and app.
+  return Math.round(Math.min(100, Math.max(0, (1 - remainingFraction) * 100)) * 10) / 10;
 }
 
 /** "Claude and GPT models" -> "Claude and GPT"; a shorter scope keeps sidebar labels readable. */

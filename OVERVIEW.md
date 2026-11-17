@@ -8,6 +8,7 @@ Antigravity+ adds a second Antigravity provider to Paseo that runs `agy acp`, th
 - Permission modes from agy: Default, Accept edits, Auto and Plan. New agents start in Auto, which runs edits and safe commands and asks through a Paseo permission card before anything irreversible. agy is never started with `--dangerously-skip-permissions`.
 - Paseo's MCP servers and the agent's Paseo instructions reach agy, so Antigravity agents can use Paseo's orchestration tools.
 - The context window meter in the composer, from agy's usage updates.
+- Steering: a message sent during a running turn joins that turn instead of interrupting it.
 - Model and thinking level as separate choices.
 
 ## Quota
@@ -22,5 +23,5 @@ The quota source reads agy's Google login from the macOS Keychain (service `gemi
 ## Limits
 
 - Antigravity+ is a separate provider. Agents created with the built-in Antigravity provider stay on it; import their conversations to move them.
-- Sending a message during a running turn interrupts that turn and starts a new one. agy can steer a running turn, but Paseo's ACP adapter does not pass steering through yet.
-- agy tool calls other than file edits show as generic tool rows.
+- Background commands: when agy moves a long command to the background it ends the turn and resumes on its own later, so Paseo can show the agent idle while that command runs.
+- Shell, read and search tools show as generic tool rows with their input and output; file edits show as diffs.

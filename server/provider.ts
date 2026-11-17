@@ -7,7 +7,7 @@ import type {
   ProviderRegistration,
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
-import { openAgyStream } from "./agy-stream.ts";
+import { openAgyStream, type AgyStream } from "./agy-stream.ts";
 import { createMultiplexedConnection } from "./multiplex.ts";
 
 export const PROVIDER_ID = "antigravity-plus";
@@ -95,14 +95,23 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
       const launch = request.launch;
       if (!launch) throw new Error("The daemon must supply the agy launch command");
       return createMultiplexedConnection(
-        (env) =>
-          runAcpProvider({
+        async (env) => {
+          // The adapter opens a capability probe first and the session's agy process last,
+          // so the newest stream is the one running prompts.
+          let latest: AgyStream | null = null;
+          const connection = await runAcpProvider({
             id: PROVIDER_ID,
             label: LABEL,
             icon: "icon.svg",
-            connector: () => openAgyStream(launch, env),
+            connector: () => {
+              latest = openAgyStream(launch, env);
+              return latest.stream;
+            },
             transformers: [defaultModeTransformer],
-          }).connect(request),
+          }).connect(request);
+          return { connection, steer: (content) => latest?.steer(content) ?? false };
+        },
+        request.capabilities,
         withDefaultMode,
       );
     },
