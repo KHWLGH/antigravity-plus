@@ -30,13 +30,17 @@ function isObject(value: unknown): value is JsonObject {
  * which agy ignores. agy appends `_meta.antigravity.systemPrompt.append` to its own
  * system prompt instead (verified against agy 1.5.10), so copy the value across.
  */
-export function withAntigravityMeta(message: AcpStreamMessage): AcpStreamMessage {
+export function withAntigravityMeta(message: AcpStreamMessage, extra?: string): AcpStreamMessage {
   if (!("method" in message) || !SESSION_METHODS.has(message.method)) return message;
   const params = message.params;
+  // Only Paseo's session opens carry `_meta`; catalog probes stay untouched.
   if (!isObject(params) || !isObject(params._meta)) return message;
   const paseo = params._meta._paseo;
-  const systemPrompt = isObject(paseo) ? paseo.systemPrompt : undefined;
-  if (typeof systemPrompt !== "string" || systemPrompt.trim().length === 0) return message;
+  const own = isObject(paseo) ? paseo.systemPrompt : undefined;
+  const systemPrompt = [typeof own === "string" ? own.trim() : "", extra?.trim() ?? ""]
+    .filter((part) => part.length > 0)
+    .join("\n\n");
+  if (systemPrompt.length === 0) return message;
   const antigravity = isObject(params._meta.antigravity) ? params._meta.antigravity : {};
   return {
     ...message,
@@ -179,11 +183,63 @@ export class SteeringRelay {
   }
 }
 
+let observedModelIds: string[] = [];
+
+/**
+ * Model ids from agy's last session/new or session/load answer, effort variants included
+ * (`gemini-4-hydrogen-xhigh`). The adapter keeps only the configOptions; catalog discovery
+ * reads this right after the answer that set it.
+ */
+export function latestModelIds(): readonly string[] {
+  return observedModelIds;
+}
+
+function observeModels(message: AcpStreamMessage): void {
+  if (!("result" in message) || !isObject(message.result) || !isObject(message.result.models)) return;
+  const available = message.result.models.availableModels;
+  if (!Array.isArray(available)) return;
+  const ids = available
+    .map((model) => (isObject(model) ? model.modelId : undefined))
+    .filter((id): id is string => typeof id === "string");
+  if (ids.length > 0) observedModelIds = ids;
+}
+
+/** Mutable per session: the wrapper flips it when the agent enters or leaves Bypass. */
+export interface PermissionPolicy {
+  bypass: boolean;
+}
+
+export interface AgyStreamOptions {
+  policy?: PermissionPolicy;
+  /** Appended to agy's system prompt after Paseo's own on session/new|load. */
+  appendSystemPrompt?: string;
+}
+
+/** The answer Bypass gives a session/request_permission: allow once, never "always". */
+export function approve(message: AcpStreamMessage): AcpStreamMessage | null {
+  if (!("method" in message) || message.method !== "session/request_permission") return null;
+  if (!("id" in message) || message.id === null || !isObject(message.params)) return null;
+  const options = Array.isArray(message.params.options) ? message.params.options.filter(isObject) : [];
+  const choice =
+    options.find((option) => option.kind === "allow_once") ??
+    options.find((option) => typeof option.kind === "string" && option.kind.startsWith("allow"));
+  if (!choice || typeof choice.optionId !== "string") return null;
+  return {
+    jsonrpc: "2.0",
+    id: message.id,
+    result: { outcome: { outcome: "selected", optionId: choice.optionId } },
+  };
+}
+
 /**
  * Starts `agy acp` with the daemon-resolved launch plus the session's own environment
  * (PASEO_AGENT_ID, PASEO_WORKSPACE_ID, ...), and exposes it as an object stream.
  */
-export function openAgyStream(launch: ProviderLaunch, env: Record<string, string>): AgyStream {
+export function openAgyStream(
+  launch: ProviderLaunch,
+  env: Record<string, string>,
+  options: AgyStreamOptions = {},
+): AgyStream {
   const child = spawnProcess(launch.command, launch.args, {
     env: { ...launch.env, ...env },
     stdio: "pipe",
@@ -228,6 +284,16 @@ export function openAgyStream(launch: ProviderLaunch, env: Record<string, string
           console.error("[antigravity-plus] agy acp wrote a non-JSON line; ignored");
           return;
         }
+        observeModels(message);
+        if (options.policy?.bypass) {
+          const answer = approve(message);
+          if (answer) {
+            write(answer).catch((error) => {
+              console.error(`[antigravity-plus] bypass approval failed: ${String(error)}`);
+            });
+            return;
+          }
+        }
         for (const forwarded of relay.incoming(withToolResults(message))) controller.enqueue(forwarded);
       });
       child.once("error", (error) => {
@@ -257,7 +323,7 @@ export function openAgyStream(launch: ProviderLaunch, env: Record<string, string
   });
   const writable = new WritableStream<AcpStreamMessage>({
     write(message) {
-      const prepared = withAntigravityMeta(message);
+      const prepared = withAntigravityMeta(message, options.appendSystemPrompt);
       relay.outgoing(prepared);
       return write(prepared);
     },

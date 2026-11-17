@@ -128,9 +128,10 @@ export function summaryWindows(summary: QuotaSummary): UsageWindow[] {
 
 /**
  * Google models are absent from the quota summary today. fetchAvailableModels reports a
- * remaining fraction and reset per model with no window length; today every Google agent
- * model shares one pool. Publish one window with a stable ID showing the most depleted
- * Google model, so the ID cannot drift when pools split or merge as quota is used.
+ * remaining fraction and reset per model with no window length. It lists Gemini 4 Hydrogen
+ * and the Flash models, which share one pool, but not Gemini 4 Argon: Argon has its own quota
+ * that only agy's local language server reports, so this window is named for what it covers.
+ * One window with a stable ID shows the most depleted listed model.
  */
 export function googlePoolWindows(models: AvailableModels, summary: QuotaSummary): UsageWindow[] {
   const summaryCoversGoogle = summary.groups.some((group) =>
@@ -152,7 +153,7 @@ export function googlePoolWindows(models: AvailableModels, summary: QuotaSummary
   return [
     windowFromReportedDuration({
       durationSeconds: null,
-      unknown: { id: "google-models", label: "Google models", shortLabel: "Google" },
+      unknown: { id: "google-models", label: "Gemini Hydrogen/Flash", shortLabel: "Hydrogen" },
       utilizationPct: used,
       resetsAt: lowest.reset,
       summary: true,

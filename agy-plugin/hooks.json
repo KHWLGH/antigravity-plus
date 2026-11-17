@@ -1,0 +1,16 @@
+{
+  "antigravity-plus-subagents": {
+    "PreToolUse": [
+      {
+        "matcher": "invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh ~/.gemini/config/plugins/antigravity-plus-guard/subagent-guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

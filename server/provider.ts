@@ -2,35 +2,31 @@ import { createHash } from "node:crypto";
 import { execCommand } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import type {
-  ProviderInput,
   ProviderLaunch,
   ProviderRegistration,
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
-import { openAgyStream } from "./agy-stream.ts";
-import { launchContext, wrapConnection } from "./multiplex.ts";
+import { latestModelIds, openAgyStream } from "./agy-stream.ts";
+import { DEFAULT_MODE, withBypassMode, withModelThinking } from "./catalog.ts";
+import { launchContext, wrapConnection } from "./session-wrapper.ts";
+import { AGY_ENV, SUBAGENT_GUIDANCE, setSubagentsAllowed } from "./subagents.ts";
 
 export const PROVIDER_ID = "antigravity-plus";
 const LABEL = "Antigravity+";
 /** agy 1.5.8 added context window updates to ACP sessions; earlier ACP lacks them. */
 const MIN_AGY = [1, 5, 8] as const;
-/** Auto is the starting mode: edits and safe commands run, risky ones ask. */
-export const DEFAULT_MODE = "auto";
 
-type SessionOpen = Extract<ProviderInput, { type: "session.open" }>;
-
-const defaultModeTransformer: AcpTransformer = {
+/** Adds Bypass (the default for new agents) and each model's own thinking levels. */
+const catalogTransformer: AcpTransformer = {
   discover(catalog) {
-    if (!catalog.modes.some((mode) => mode.id === DEFAULT_MODE)) return catalog;
-    return { ...catalog, defaultMode: DEFAULT_MODE };
+    return {
+      ...catalog,
+      modes: withBypassMode(catalog.modes),
+      defaultMode: DEFAULT_MODE,
+      models: withModelThinking(catalog.models, latestModelIds()),
+    };
   },
 };
-
-/** A brand-new session without an explicit mode starts in Auto; resumed ones keep agy's mode. */
-export function withDefaultMode(input: SessionOpen): SessionOpen {
-  if (input.persistence || input.config.mode) return input;
-  return { ...input, config: { ...input.config, mode: DEFAULT_MODE } };
-}
 
 function compareVersion(version: string): number | null {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -100,15 +96,22 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
         icon: "icon.svg",
         connector: () => {
           const context = launchContext.getStore();
-          const agy = openAgyStream(launch, context?.env ?? {});
+          const agy = openAgyStream(launch, context?.env ?? { ...AGY_ENV }, {
+            policy: context?.policy,
+            appendSystemPrompt: SUBAGENT_GUIDANCE,
+          });
           context?.register(agy);
           return agy.stream;
         },
-        transformers: [defaultModeTransformer],
+        transformers: [catalogTransformer],
         // agy sends commands and skills right after session/new|load; wait so the composer has them.
         acpOptions: { waitForInitialCommands: true },
       }).connect(request);
-      return wrapConnection(inner, request.capabilities, withDefaultMode);
+      return wrapConnection(inner, request.capabilities, {
+        modelIds: latestModelIds,
+        setSubagentsAllowed,
+        env: AGY_ENV,
+      });
     },
   };
 }

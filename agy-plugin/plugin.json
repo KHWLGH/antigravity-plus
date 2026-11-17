@@ -1,0 +1,4 @@
+{
+  "name": "antigravity-plus-guard",
+  "description": "Companion of the Antigravity+ Paseo plugin. Inside Antigravity+ sessions only, blocks invoke_subagent unless the agent's 'agy subagents' switch is on, so subagents are started through Paseo instead. Does nothing in other agy sessions."
+}
