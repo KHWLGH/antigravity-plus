@@ -100,9 +100,10 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
           const context = launchContext.getStore();
           const agy = openAgyStream(launch, context?.env ?? { ...AGY_ENV }, {
             policy: context?.policy,
+            cwd: context?.cwd,
             appendSystemPrompt: SUBAGENT_GUIDANCE,
           });
-          context?.register(agy);
+          context?.register?.(agy);
           return agy.stream;
         },
         transformers: [catalogTransformer],

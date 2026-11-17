@@ -9,6 +9,7 @@ import type {
   ProviderPrompt,
 } from "@getpaseo/plugin/server/provider";
 import type { AcpContentBlock, AgyStream, PermissionPolicy } from "./agy-stream.ts";
+import { listWorkingDirectory } from "./session-list.ts";
 import {
   BYPASS_MODE_ID,
   BYPASS_NATIVE_MODE,
@@ -27,8 +28,10 @@ type Options = Readonly<Record<string, unknown>>;
 /** What a connector call needs to know about the session.open that triggered it. */
 export interface LaunchContext {
   env: Record<string, string>;
-  policy: PermissionPolicy;
-  register(stream: AgyStream): void;
+  /** The directory agy runs in; see AgyStreamOptions.cwd. */
+  cwd?: string;
+  policy?: PermissionPolicy;
+  register?(stream: AgyStream): void;
 }
 
 /**
@@ -249,6 +252,7 @@ export function wrapConnection(
     sessions.set(input.sessionId, state);
     const context: LaunchContext = {
       env: { ...(input.config.env ?? {}), ...(options.env ?? {}) },
+      cwd: input.config.cwd,
       policy: state.policy,
       register: (stream) => {
         state.stream = stream;
@@ -348,6 +352,13 @@ export function wrapConnection(
     capabilities: steering ? [...inner.capabilities, STEER] : [...inner.capabilities],
     send(input) {
       if (input.type === "session.open") return open(input);
+      if (input.type === "catalog" || input.type === "sessions") {
+        // These start their own short-lived agy. A listing runs in the plugin's empty directory,
+        // which agy then reports for conversations that have no directory of their own.
+        const cwd = input.type === "sessions" ? listWorkingDirectory() : input.cwd;
+        const context: LaunchContext = { env: { ...(options.env ?? {}) }, cwd };
+        return launchContext.run(context, () => inner.send(input));
+      }
       const gate = "sessionId" in input ? opening.get(input.sessionId) : undefined;
       if (gate) {
         void gate.then(() => route(input)).catch((error) => fail(input, error));

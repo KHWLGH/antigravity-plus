@@ -1,7 +1,10 @@
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import { spawnProcess, terminateProcess } from "@getpaseo/plugin/server";
 import type { AcpStream, AcpStreamMessage } from "@getpaseo/plugin/server/acp";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
+import { SessionListRelay } from "./session-list.ts";
 
 /** Methods whose `_meta` agy reads when it creates or reopens a session runtime. */
 const SESSION_METHODS = new Set(["session/new", "session/load", "session/resume"]);
@@ -211,6 +214,11 @@ export interface PermissionPolicy {
 
 export interface AgyStreamOptions {
   policy?: PermissionPolicy;
+  /**
+   * agy's working directory. agy records it as the conversation's directory and treats it as a
+   * workspace root, so it must be the session's own directory, never "/".
+   */
+  cwd?: string;
   /** Appended to agy's system prompt after Paseo's own on session/new|load. */
   appendSystemPrompt?: string;
 }
@@ -231,6 +239,18 @@ export function approve(message: AcpStreamMessage): AcpStreamMessage | null {
   };
 }
 
+/** The requested directory when it exists, else the home directory; never the plugin's "/". */
+export function workingDirectory(requested: string | undefined): string {
+  if (requested) {
+    try {
+      if (statSync(requested).isDirectory()) return requested;
+    } catch {
+      // Gone or unreadable: fall back below.
+    }
+  }
+  return homedir();
+}
+
 /**
  * Starts `agy acp` with the daemon-resolved launch plus the session's own environment
  * (PASEO_AGENT_ID, PASEO_WORKSPACE_ID, ...), and exposes it as an object stream.
@@ -240,11 +260,15 @@ export function openAgyStream(
   env: Record<string, string>,
   options: AgyStreamOptions = {},
 ): AgyStream {
+  const cwd = workingDirectory(options.cwd);
   const child = spawnProcess(launch.command, launch.args, {
     env: { ...launch.env, ...env },
+    cwd,
     stdio: "pipe",
   });
   const relay = new SteeringRelay();
+  // agy reports conversations without a stored directory in this process's own directory.
+  const lists = new SessionListRelay(undefined, cwd);
   let stderrTail = "";
   child.stderr.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
@@ -297,6 +321,16 @@ export function openAgyStream(
           return;
         }
         observeModels(message);
+        const listed = lists.incoming(message);
+        if (listed) {
+          for (const request of listed.send) {
+            write(request).catch((error) => {
+              console.error(`[antigravity-plus] session list paging failed: ${String(error)}`);
+            });
+          }
+          for (const answer of listed.deliver) deliver(answer);
+          return;
+        }
         if (options.policy?.bypass) {
           const answer = approve(message);
           if (answer) {
@@ -342,6 +376,7 @@ export function openAgyStream(
     write(message) {
       const prepared = withAntigravityMeta(message, options.appendSystemPrompt);
       relay.outgoing(prepared);
+      lists.outgoing(prepared);
       return write(prepared);
     },
     close() {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { SteeringRelay, approve, withAntigravityMeta, withToolResults } from "./agy-stream.ts";
+import { SteeringRelay, approve, withAntigravityMeta, withToolResults, workingDirectory } from "./agy-stream.ts";
+import { homedir, tmpdir } from "node:os";
 import type {
   ProviderConnection,
   ProviderEvent,
@@ -8,6 +9,7 @@ import type {
   ProviderModel,
 } from "@getpaseo/plugin/server/provider";
 import { withModelThinking } from "./catalog.ts";
+import { SessionListRelay, arrangeSessions, decodeCwd } from "./session-list.ts";
 import { wrapConnection } from "./session-wrapper.ts";
 import {
   availableModelsSchema,
@@ -401,4 +403,91 @@ test("a failed open drops its session state", async () => {
   const config = events.at(-1) as ReturnType<typeof innerConfig>;
   // No state left: the config passes through without the Bypass presentation.
   assert.equal(config.config.mode, "default");
+});
+
+const kb = "/Users/dev/kb";
+const noRealpath = () => [];
+const listed = [
+  { sessionId: "old", cwd: kb, updatedAt: "2026-11-01T00:00:00Z" },
+  { sessionId: "sub", cwd: `${kb}/notes`, updatedAt: "2026-11-17T12:00:00Z" },
+  { sessionId: "elsewhere", cwd: "/Users/dev/games", updatedAt: "2026-11-17T13:00:00Z" },
+  { sessionId: "undated", cwd: `${kb}/` },
+  { sessionId: "acp-new", cwd: kb, updatedAt: "2026-11-17T11:10:24Z" },
+  { sessionId: "encoded", cwd: "/Users/dev/%E5%AD%A6%E4%B9%A0", updatedAt: "2026-11-16T00:00:00Z" },
+];
+
+test("session list keeps the requested directory only, newest first, undated last", () => {
+  const sessions = arrangeSessions(listed, kb, noRealpath);
+  assert.deepEqual(sessions.map((session) => session.sessionId), ["acp-new", "old", "undated"]);
+  assert.ok(sessions.every((session) => session.cwd === kb), "kept sessions report the requested cwd");
+});
+
+test("percent-encoded and file: cwds are decoded so non-ASCII directories match", () => {
+  assert.equal(decodeCwd("/Users/dev/%E5%AD%A6%E4%B9%A0/%E7%AC%94%E8%AE%B0"), "/Users/dev/学习/笔记");
+  assert.equal(decodeCwd("file:///Users/dev/a%20b"), "/Users/dev/a b");
+  assert.equal(decodeCwd("/Users/dev/100%"), "/Users/dev/100%");
+  const sessions = arrangeSessions(listed, "/Users/dev/学习", noRealpath);
+  assert.deepEqual(sessions.map((session) => session.sessionId), ["encoded"]);
+});
+
+test("realpath variants match like the daemon's matcher", () => {
+  const resolve = (value: string) => (value === "/link/kb" ? ["/Users/dev/kb"] : []);
+  const sessions = arrangeSessions(listed, "/link/kb", resolve);
+  assert.deepEqual(sessions.map((session) => session.sessionId), ["acp-new", "old", "undated"]);
+  assert.equal(sessions[0].cwd, "/link/kb");
+});
+
+test("without a requested cwd every session comes back decoded and sorted", () => {
+  const sessions = arrangeSessions(listed, null, noRealpath);
+  assert.equal(sessions.length, listed.length);
+  assert.equal(sessions[0].sessionId, "elsewhere");
+  assert.equal(sessions.at(-1)?.sessionId, "undated");
+  assert.equal(sessions.find((session) => session.sessionId === "encoded")?.cwd, "/Users/dev/学习");
+});
+
+test("the list relay follows cursors and answers the adapter once with every page", () => {
+  const relay = new SessionListRelay(noRealpath);
+  relay.outgoing({ jsonrpc: "2.0", id: 5, method: "session/list", params: { cwd: kb } });
+  const first = relay.incoming({
+    jsonrpc: "2.0",
+    id: 5,
+    result: { sessions: [listed[0]], nextCursor: "page-2" },
+  });
+  assert.equal(first?.deliver.length, 0);
+  const follow = first?.send[0] as { id: string; params: { cwd: string; cursor: string } };
+  assert.deepEqual(follow.params, { cwd: kb, cursor: "page-2" });
+  const second = relay.incoming({ jsonrpc: "2.0", id: follow.id, result: { sessions: [listed[4]], nextCursor: null } });
+  const answer = second?.deliver[0] as { id: number; result: { sessions: Array<{ sessionId: string }>; nextCursor: null } };
+  assert.equal(answer.id, 5);
+  assert.deepEqual(answer.result.sessions.map((session) => session.sessionId), ["acp-new", "old"]);
+  assert.equal(answer.result.nextCursor, null);
+  assert.equal(relay.incoming({ jsonrpc: "2.0", id: 99, result: {} }), null, "untracked answers pass through");
+});
+
+test("a failed first page reaches the adapter unchanged", () => {
+  const relay = new SessionListRelay(noRealpath);
+  relay.outgoing({ jsonrpc: "2.0", id: 6, method: "session/list", params: {} });
+  const error = { jsonrpc: "2.0" as const, id: 6, error: { code: -32000, message: "nope" } };
+  assert.deepEqual(relay.incoming(error)?.deliver, [error]);
+});
+
+test("agy runs in the session's directory, or home when it is missing, never in /", () => {
+  assert.equal(workingDirectory(tmpdir()), tmpdir());
+  assert.equal(workingDirectory("/definitely/not/here"), homedir());
+  assert.equal(workingDirectory(undefined), homedir());
+});
+
+test("sessions agy reports in the listing directory have no known directory", () => {
+  const placeholder = "/tmp/agp-list";
+  const sessions = [
+    { sessionId: "real", cwd: kb, updatedAt: "2026-11-17T10:00:00Z" },
+    { sessionId: "unknown", cwd: placeholder, updatedAt: "2026-11-17T11:00:00Z" },
+  ];
+  assert.deepEqual(
+    arrangeSessions(sessions, kb, noRealpath, placeholder).map((session) => session.sessionId),
+    ["real"],
+  );
+  assert.deepEqual(arrangeSessions(sessions, placeholder, noRealpath, placeholder), []);
+  const all = arrangeSessions(sessions, null, noRealpath, placeholder);
+  assert.equal(all.find((session) => session.sessionId === "unknown")?.cwd, homedir());
 });
