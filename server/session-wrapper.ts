@@ -121,10 +121,11 @@ export function wrapConnection(
     for (const listener of listeners) listener(event);
   };
 
-  function settleOpen(requestId: string): void {
+  function settleOpen(requestId: string, failed = false): void {
     const pending = openRequests.get(requestId);
     if (!pending) return;
     openRequests.delete(requestId);
+    if (failed) sessions.delete(pending.sessionId);
     setTimeout(() => {
       opening.delete(pending.sessionId);
       pending.release();
@@ -203,7 +204,7 @@ export function wrapConnection(
       return;
     }
     if ((event.type === "session.ready" || event.type === "request.failed") && event.requestId) {
-      settleOpen(event.requestId);
+      settleOpen(event.requestId, event.type === "request.failed");
     }
     if (event.type === "request.completed" || event.type === "request.failed") {
       const pending = configuring.get(event.requestId);
@@ -218,6 +219,11 @@ export function wrapConnection(
     }
     const state = "sessionId" in event ? sessions.get(event.sessionId) : undefined;
     if (state && event.type === "session.opened") {
+      if (!state.stream) {
+        console.error(
+          "[antigravity-plus] agy started without this session's context: its env (PASEO_AGENT_ID) and Bypass are missing. The Paseo SDK may have changed how it calls connectors.",
+        );
+      }
       if (steering) event = { ...event, capabilities: [...event.capabilities, STEER] };
     } else if (state && event.type === "session.config") {
       state.innerConfig = event.config;

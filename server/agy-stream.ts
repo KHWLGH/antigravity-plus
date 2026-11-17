@@ -220,9 +220,9 @@ export function approve(message: AcpStreamMessage): AcpStreamMessage | null {
   if (!("method" in message) || message.method !== "session/request_permission") return null;
   if (!("id" in message) || message.id === null || !isObject(message.params)) return null;
   const options = Array.isArray(message.params.options) ? message.params.options.filter(isObject) : [];
-  const choice =
-    options.find((option) => option.kind === "allow_once") ??
-    options.find((option) => typeof option.kind === "string" && option.kind.startsWith("allow"));
+  // Never an "always" option: that would write a permanent grant into agy's settings. Without
+  // an allow-once option the request goes to Paseo as a normal permission card.
+  const choice = options.find((option) => option.kind === "allow_once");
   if (!choice || typeof choice.optionId !== "string") return null;
   return {
     jsonrpc: "2.0",

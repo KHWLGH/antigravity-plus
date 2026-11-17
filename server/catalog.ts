@@ -46,7 +46,10 @@ export function thinkingLevels(
   modelId: string,
   variantIds: readonly string[],
 ): Array<(typeof LEVELS)[number]> | null {
-  if (variantIds.length === 0) return null;
+  const suffixes = LEVELS.map((level) => `-${level}`);
+  // agy names effort variants like gemini-4-hydrogen-xhigh. If it ever stops, every model would
+  // lose its levels, so treat a list without any variant as unknown.
+  if (!variantIds.some((id) => suffixes.some((suffix) => id.endsWith(suffix)))) return null;
   const variants = new Set(variantIds);
   return LEVELS.filter((level) => variants.has(`${modelId}-${level}`));
 }
@@ -61,7 +64,7 @@ export function withModelThinking<T extends ProviderModel>(
   models: readonly T[],
   variantIds: readonly string[],
 ): T[] {
-  if (variantIds.length === 0) return [...models];
+  if (thinkingLevels("", variantIds) === null) return [...models];
   return models.map((model) => {
     const levels = thinkingLevels(model.id, variantIds) ?? [];
     const thinkingOptions: ProviderThinkingOption[] = levels.map((id) => ({

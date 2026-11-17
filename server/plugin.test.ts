@@ -377,3 +377,28 @@ test("before agy listed its models, an open with a thinking level asks for the l
   assert.equal(open.config.thinkingOption, undefined);
   assert.equal(seen.length, 0, "the private catalog answer is not forwarded");
 });
+
+test("Bypass never picks an always option and leaves such requests to Paseo", () => {
+  const request = {
+    jsonrpc: "2.0" as const,
+    id: 3,
+    method: "session/request_permission",
+    params: { options: [{ optionId: "always", kind: "allow_always" }, { optionId: "deny", kind: "reject_once" }] },
+  };
+  assert.equal(approve(request), null);
+});
+
+test("a model list without effort variants keeps levels unknown instead of empty", () => {
+  const input: ProviderModel[] = [{ id: "gemini-4-hydrogen", label: "H" }];
+  assert.deepEqual(withModelThinking(input, ["gemini-4-hydrogen", "gemini-4-argon"]), input);
+});
+
+test("a failed open drops its session state", async () => {
+  const { inner, events, connection } = wrapped();
+  await connection.send(openInput({}));
+  inner.fire({ type: "request.failed", requestId: "o1", error: { message: "boom" } } as ProviderEvent);
+  inner.fire(innerConfig("default"));
+  const config = events.at(-1) as ReturnType<typeof innerConfig>;
+  // No state left: the config passes through without the Bypass presentation.
+  assert.equal(config.config.mode, "default");
+});
