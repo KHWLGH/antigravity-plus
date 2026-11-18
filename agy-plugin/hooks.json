@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh ~/.gemini/config/plugins/antigravity-plus-guard/subagent-guard.sh",
+            "command": "/bin/sh ./subagent-guard.sh",
             "timeout": 5
           }
         ]

@@ -2,13 +2,21 @@
   "name": "antigravity-plus",
   "private": true,
   "version": "0.1.0",
+  "description": "Antigravity through agy's ACP server: history after restart, session import, slash commands and skills, permission modes, context usage, and quota.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jule-x/antigravity-plus.git"
+  },
   "type": "module",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
+    "OVERVIEW.*.md",
     "icon.svg",
     "index.server.ts",
-    "server/"
+    "server/",
+    "agy-plugin/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
