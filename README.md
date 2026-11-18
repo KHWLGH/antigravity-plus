@@ -19,7 +19,7 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 
 - **Paseo** `>= 0.16.0`
 - **Antigravity CLI (`agy`)** `>= 1.5.8`, installed on `PATH` and signed in
-- **macOS** for the Usage panel quota source (reads service `gemini` from the macOS Keychain)
+- **macOS only**: the Usage panel quota source reads service `gemini` from the macOS Keychain, and the companion hook runs with `/bin/sh`. Windows is not supported; Linux is untested.
 
 ## Installation
 
@@ -35,15 +35,17 @@ To enforce blocking `agy`'s internal `invoke_subagent` tool inside Antigravity+ 
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
-ln -s "$(ls -dt ~/.paseo/plugins/antigravity-plus/*/checkout/agy-plugin | head -n 1)" ~/.gemini/config/plugins/antigravity-plus-guard
+ln -sfn "$(ls -dt ~/.paseo/plugins/antigravity-plus/*/checkout/agy-plugin | head -n 1)" ~/.gemini/config/plugins/antigravity-plus-guard
 ```
 
 If you installed the plugin from a local clone instead:
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
-ln -s /absolute/path/to/antigravity-plus/agy-plugin ~/.gemini/config/plugins/antigravity-plus-guard
+ln -sfn /absolute/path/to/antigravity-plus/agy-plugin ~/.gemini/config/plugins/antigravity-plus-guard
 ```
+
+The installed checkout directory changes after `paseo plugin update`, so re-run the first command after each update.
 
 The `PreToolUse` hook only denies `invoke_subagent` when `ANTIGRAVITY_PLUS=1` is present in the environment (set automatically by Antigravity+). Outside Paseo, it returns `{"decision":"allow"}` and leaves your terminal/IDE `agy` sessions untouched.
 

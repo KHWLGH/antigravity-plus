@@ -19,7 +19,7 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 
 - **Paseo** `>= 0.16.0`
 - **Antigravity CLI (`agy`)** `>= 1.5.8`（在 `PATH` 中可执行且已登录）
-- **macOS**（仅额度监控依赖 macOS 钥匙串中的 `gemini` 登录项；提供商本身跨平台可用）
+- **仅支持 macOS**：额度监控读取 macOS 钥匙串中的 `gemini` 登录项，配套钩子通过 `/bin/sh` 运行。不支持 Windows，Linux 未经测试。
 
 ## 安装方式
 
@@ -35,15 +35,17 @@ paseo plugin add git:jule-x/antigravity-plus
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
-ln -s "$(ls -dt ~/.paseo/plugins/antigravity-plus/*/checkout/agy-plugin | head -n 1)" ~/.gemini/config/plugins/antigravity-plus-guard
+ln -sfn "$(ls -dt ~/.paseo/plugins/antigravity-plus/*/checkout/agy-plugin | head -n 1)" ~/.gemini/config/plugins/antigravity-plus-guard
 ```
 
 如果是从本地克隆的目录安装的插件：
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
-ln -s /absolute/path/to/antigravity-plus/agy-plugin ~/.gemini/config/plugins/antigravity-plus-guard
+ln -sfn /absolute/path/to/antigravity-plus/agy-plugin ~/.gemini/config/plugins/antigravity-plus-guard
 ```
+
+`paseo plugin update` 后安装目录会变化，请在每次更新后重新执行第一条命令。
 
 该 `PreToolUse` 钩子仅在进程带有 `ANTIGRAVITY_PLUS=1` 环境变量（由 Antigravity+ 自动注入）时拒绝 `invoke_subagent`；在终端或 IDE 等其他环境下均返回 `{"decision":"allow"}`，不影响正常使用。
 

@@ -18,12 +18,12 @@ Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, link
 
 ## Quota
 
-The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota. It reports the plan name, a weekly and a 5-hour limit for Claude and GPT models, and a "Gemini" window for the pool shared by Gemini 4 Hydrogen and the Flash models. Google does not report a length for that pool, so it is labeled by name only. Gemini 4 Argon has a separate quota that this backend does not report, so the Gemini window leaves Argon out. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin never reads the refresh token or writes the Keychain.
+The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota. It reports the plan name, a weekly and a 5-hour limit for Claude and GPT models, and a "Gemini" window for the pool shared by Gemini 4 Hydrogen and the Flash models. Google does not report a length for that pool, so it is labeled by name only. Gemini 4 Argon has a separate quota that this backend does not report, so the Gemini window leaves Argon out. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin only uses the access token, never uses or stores the refresh token, and never writes the Keychain.
 
 ## Requirements
 
 - Paseo 0.16.0 or later and agy 1.5.8 or later, signed in.
-- Quota needs macOS. The provider works wherever agy runs.
+- macOS only. The quota source reads the macOS Keychain and the companion agy plugin runs its hook with `/bin/sh`. Windows is not supported, and Linux is untested.
 
 ## Limits
 

@@ -68,7 +68,7 @@ function isExpired(credential: Credential): boolean {
 
 /**
  * Lets agy refresh its own login by running a cheap agy command. The plugin
- * never reads the refresh token or writes the Keychain; agy does both itself.
+ * never uses the refresh token or writes the Keychain; agy does both itself.
  */
 let refreshing: Promise<void> | null = null;
 

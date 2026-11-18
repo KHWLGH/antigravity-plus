@@ -18,12 +18,12 @@ Antigravity+ 为 Paseo 增加了一个通过 `agy acp`（Antigravity CLI 内置�
 
 ## 额度监控
 
-额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Gemini 4 Hydrogen 和 Flash 模型共享池的 "Gemini" 窗口（接口未返回该池的周期长度，故仅按名称展示）。Gemini 4 Argon 使用独立额度且该后端不返回，因此不包含在 Gemini 窗口内。访问令牌仅用于上述查询请求；当令牌过期时，插件会执行一次 `agy models` 让 agy 自行刷新登录，插件从不读取 refresh token，也不会写入钥匙串。
+额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Gemini 4 Hydrogen 和 Flash 模型共享池的 "Gemini" 窗口（接口未返回该池的周期长度，故仅按名称展示）。Gemini 4 Argon 使用独立额度且该后端不返回，因此不包含在 Gemini 窗口内。访问令牌仅用于上述查询请求；当令牌过期时，插件会执行一次 `agy models` 让 agy 自行刷新登录，插件只使用访问令牌，不使用也不保存 refresh token，也不会写入钥匙串。
 
 ## 环境要求
 
 - Paseo 0.16.0 及以上，已登录的 agy 1.5.8 及以上。
-- 额度监控需要 macOS；提供商本身在所有支持 agy 的系统上均可运行。
+- 仅支持 macOS：额度数据源读取 macOS 钥匙串，配套 agy 插件的 hook 通过 `/bin/sh` 运行。不支持 Windows，Linux 未经测试。
 
 ## 已知限制
 
