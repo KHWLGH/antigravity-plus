@@ -61,6 +61,10 @@ npm run typecheck
 npm test
 ```
 
+## Community
+
+This project recognizes and appreciates the open-source sharing spirit of the [LINUX DO](https://linux.do/) community. Feel free to share feedback, ideas, and usage tips there.
+
 ## License
 
 [MIT](./LICENSE)

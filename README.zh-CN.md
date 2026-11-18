@@ -61,6 +61,10 @@ npm run typecheck
 npm test
 ```
 
+## 社区认可与致谢
+
+本项目认可并感谢 [LINUX DO 社区](https://linux.do/) 的开源分享精神，欢迎各位佬友在社区内交流使用体验与改进建议。
+
 ## 开源协议
 
 [MIT](./LICENSE)
