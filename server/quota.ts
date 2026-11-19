@@ -12,12 +12,15 @@ import {
   availableModelsSchema,
   googlePoolWindows,
   quotaSummarySchema,
+  summaryCoversGoogle,
   summaryWindows,
 } from "./quota-windows.ts";
 
 /** agy stores its Google login in the macOS Keychain under this service, via go-keyring. */
 const KEYCHAIN_SERVICE = "gemini";
 const API_BASE = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+/** Fallback CLI version when `agy --version` cannot be read; backend gates Gemini/Argon groups on `antigravity/cli/`. */
+const FALLBACK_CLI_VERSION = "1.5.11";
 /** Providers whose sessions run on agy's own login. */
 const AGY_PROVIDERS = new Set(["antigravity-plus", "antigravity"]);
 /** Treat a token this close to expiry as expired; a fetch takes a few seconds. */
@@ -80,10 +83,38 @@ function refreshThroughAgy(): Promise<void> {
   return refreshing;
 }
 
-async function runAgyRefresh(): Promise<void> {
+function agyCandidates(): string[] {
   const home = process.env.HOME ?? "";
-  const candidates = ["agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy", `${home}/.local/bin/agy`];
-  for (const command of candidates) {
+  return ["agy", "/opt/homebrew/bin/agy", "/usr/local/bin/agy", `${home}/.local/bin/agy`];
+}
+
+let resolvedUserAgent: Promise<string> | null = null;
+
+function agyUserAgent(): Promise<string> {
+  resolvedUserAgent ??= readAgyVersion().then((version) => `antigravity/cli/${version}`);
+  return resolvedUserAgent;
+}
+
+async function readAgyVersion(): Promise<string> {
+  for (const command of agyCandidates()) {
+    try {
+      const { stdout } = await execCommand(command, ["--version"], {
+        env: process.env,
+        timeout: 5_000,
+      });
+      const match = /(\d+\.\d+\.\d+)/.exec(stdout);
+      if (match) return match[1];
+      return FALLBACK_CLI_VERSION;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      return FALLBACK_CLI_VERSION;
+    }
+  }
+  return FALLBACK_CLI_VERSION;
+}
+
+async function runAgyRefresh(): Promise<void> {
+  for (const command of agyCandidates()) {
     try {
       await execCommand(command, ["models"], { env: process.env, timeout: REFRESH_TIMEOUT_MS });
       return;
@@ -102,13 +133,13 @@ class HttpRejected extends Error {
   }
 }
 
-async function post(method: string, token: string, body: unknown): Promise<unknown> {
+async function post(method: string, token: string, body: unknown, userAgent: string): Promise<unknown> {
   const response = await fetch(`${API_BASE}:${method}`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
-      "user-agent": "paseo-antigravity-plus/0.1",
+      "user-agent": userAgent,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -153,22 +184,30 @@ async function fetchReport(): Promise<UsageReport> {
 }
 
 async function requestReport(token: string): Promise<UsageReport> {
-  const [summaryRaw, modelsRaw, tierRaw] = await Promise.all([
-    post("retrieveUserQuotaSummary", token, {}),
-    post("fetchAvailableModels", token, {}),
-    post("loadCodeAssist", token, { metadata: { ideType: "ANTIGRAVITY", pluginType: "GEMINI" } }).catch(
-      () => null,
-    ),
+  const userAgent = await agyUserAgent();
+  const [summaryRaw, tierRaw] = await Promise.all([
+    post("retrieveUserQuotaSummary", token, {}, userAgent),
+    post(
+      "loadCodeAssist",
+      token,
+      { metadata: { ideType: "ANTIGRAVITY", pluginType: "GEMINI" } },
+      userAgent,
+    ).catch(() => null),
   ]);
   const summary = quotaSummarySchema.parse(summaryRaw);
-  const models = availableModelsSchema.parse(modelsRaw);
   const tier = z
     .object({
       paidTier: z.object({ name: z.string() }).optional(),
       currentTier: z.object({ name: z.string() }).optional(),
     })
     .safeParse(tierRaw);
-  const windows = [...summaryWindows(summary), ...googlePoolWindows(models, summary)];
+  const windows = [...summaryWindows(summary)];
+  if (!summaryCoversGoogle(summary)) {
+    const modelsRaw = await post("fetchAvailableModels", token, {}, userAgent).catch(() => null);
+    if (modelsRaw !== null) {
+      windows.push(...googlePoolWindows(availableModelsSchema.parse(modelsRaw), summary));
+    }
+  }
   if (windows.length === 0) {
     return unavailable({ kind: "no_quota", detail: "Antigravity reported no quota windows" });
   }

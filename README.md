@@ -10,10 +10,10 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 - **Fast session import**: Lists local `agy` CLI conversations for the current workspace directory (newest first, with in-memory caching and background refresh), filtering out unimportable Antigravity desktop app records.
 - **Slash commands & skills**: Surfaces `/goal`, `/plan`, `/compact`, `/grill-me`, and your custom skills in the Paseo composer.
 - **Permission modes**: Adds **Bypass** (default for new agents, running outside the terminal sandbox and auto-approving with `allow_once` without polluting global grants) alongside `agy`'s native **Default**, **Accept edits**, **Auto**, and **Plan** modes.
-- **Per-model thinking levels**: Derives each model's supported thinking levels from `agy`'s variant catalog (including `XHigh` for Gemini 4 Hydrogen, and no thinking selector for level-less models like GPT-OSS and Orchestrator).
+- **Per-model thinking levels**: Derives each model's supported thinking levels from `agy`'s variant catalog (including `XHigh` for Gemini 4 Neon and Gemini 4 Hydrogen, and no thinking selector for level-less models like GPT-OSS and Orchestrator).
 - **Mid-turn steering**: Messages sent during an active turn join the running turn instead of interrupting it.
 - **Paseo MCP & subagent orchestration**: Forwards Paseo's MCP servers and agent system instructions to `agy`, and redirects subagent creation from `agy`'s hidden `invoke_subagent` to Paseo's visible, controllable `create_agent`.
-- **Context window & Usage panel quota**: Reports live context window usage in the composer and displays Claude/GPT (Weekly & 5-hour) and Gemini (Hydrogen/Flash shared pool) quota windows on macOS.
+- **Context window & Usage panel quota**: Reports live context window usage in the composer and displays Gemini (Weekly & 5-hour shared pool for Neon/Hydrogen/Flash), Claude/GPT (Weekly & 5-hour), and Gemini 4 Argon (Weekly) quota windows on macOS.
 
 ## Requirements
 
@@ -23,7 +23,13 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 
 ## Installation
 
-Install from the Paseo plugin registry (once listed) or directly from GitHub:
+Install from the official Paseo plugin registry:
+
+```bash
+paseo plugin add jule-x/antigravity-plus
+```
+
+Or install directly from GitHub:
 
 ```bash
 paseo plugin add git:jule-x/antigravity-plus

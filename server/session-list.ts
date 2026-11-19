@@ -106,6 +106,8 @@ function updatedAt(session: JsonObject): number {
 
 /** Where agy CLI keeps the conversations it can load; the desktop app keeps its own elsewhere. */
 const CLI_CONVERSATIONS = path.join(homedir(), ".gemini", "antigravity-cli", "conversations");
+/** agy CLI's summary index, which stores conversation titles and every workspace URI. */
+export const CLI_SUMMARIES_DB = path.join(homedir(), ".gemini", "antigravity-cli", "conversation_summaries.db");
 
 /** A loadability check for one listing: a conversation agy CLI can load has a database here. */
 export function cliLoadable(directory = CLI_CONVERSATIONS): (sessionId: string) => boolean {
@@ -119,12 +121,66 @@ export function cliLoadable(directory = CLI_CONVERSATIONS): (sessionId: string) 
   return (sessionId) => !/^[0-9A-Za-z-]+$/.test(sessionId) || existsSync(path.join(directory, `${sessionId}.db`));
 }
 
+interface SqliteDatabase {
+  prepare(sql: string): { all(): Array<{ conversation_id?: unknown; workspace_uris?: unknown }> };
+  close(): void;
+}
+
+/**
+ * Extra workspace directories recorded for multi-root sessions. agy's `session/list` reports only
+ * the first `workspace_uris` entry, hiding sessions with multiple roots — including older
+ * Antigravity+ conversations where agy ran in `/` and recorded `["file:///", "<cwd>"]`.
+ */
+export function cliStoredCwds(databasePath = CLI_SUMMARIES_DB): (sessionId: string) => readonly string[] {
+  let loaded: Map<string, string[]> | null = null;
+  const load = (): Map<string, string[]> => {
+    if (loaded) return loaded;
+    loaded = new Map();
+    if (!existsSync(databasePath)) return loaded;
+    let db: SqliteDatabase | null = null;
+    try {
+      // Paseo loads plugins without import.meta.url, so no createRequire; getBuiltinModule needs no base path.
+      const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as {
+        DatabaseSync: new (location: string, options?: { readOnly?: boolean; timeout?: number }) => SqliteDatabase;
+      };
+      db = new DatabaseSync(databasePath, { readOnly: true, timeout: 200 });
+      const rows = db
+        .prepare("SELECT conversation_id, workspace_uris FROM conversation_summaries WHERE workspace_uris LIKE '%,%'")
+        .all();
+      for (const row of rows) {
+        if (typeof row.conversation_id !== "string" || typeof row.workspace_uris !== "string") continue;
+        let uris: unknown;
+        try {
+          uris = JSON.parse(row.workspace_uris);
+        } catch {
+          continue;
+        }
+        if (!Array.isArray(uris)) continue;
+        const dirs = uris.filter((uri): uri is string => typeof uri === "string" && uri.length > 0).map(decodeCwd);
+        if (dirs.length > 0) loaded.set(row.conversation_id, dirs);
+      }
+    } catch {
+      // Missing node:sqlite, locked database, or changed schema: fall back to agy's own cwd only.
+    } finally {
+      try {
+        db?.close();
+      } catch {
+        // Ignore close errors.
+      }
+    }
+    return loaded;
+  };
+  return (sessionId) => load().get(sessionId) ?? [];
+}
+
 export interface ArrangeOptions {
   resolve?: RealpathResolver;
   /** The listing process's directory: agy's stand-in for "no directory recorded". */
   placeholderCwd?: string | null;
   /** False for conversations agy cannot load, which would import as empty sessions. */
   loadable?: (sessionId: string) => boolean;
+  /** Additional workspace directories from agy's index, for sessions whose first URI is `/` or another root. */
+  storedCwds?: (sessionId: string) => readonly string[];
 }
 
 /**
@@ -139,25 +195,37 @@ export function arrangeSessions(
   const resolve = options.resolve ?? realpaths;
   const placeholderCwd = options.placeholderCwd ?? null;
   const loadable = options.loadable ?? cliLoadable();
+  const storedCwds = options.storedCwds ?? cliStoredCwds();
   const cache = new Map<string, Set<string>>();
   const target = requestedCwd ? variantsOf(requestedCwd, resolve, cache) : null;
   const placeholder = placeholderCwd ? variantsOf(placeholderCwd, resolve, cache) : null;
+  const isPlaceholder = (value: string) =>
+    placeholder !== null && [...variantsOf(value, resolve, cache)].some((variant) => placeholder.has(variant));
   const arranged: JsonObject[] = [];
   for (const session of sessions) {
     if (!isObject(session)) continue;
-    if (typeof session.sessionId === "string" && !loadable(session.sessionId)) continue;
+    const sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
+    if (sessionId && !loadable(sessionId)) continue;
     let cwd = typeof session.cwd === "string" ? decodeCwd(session.cwd) : undefined;
-    if (cwd && placeholder && [...variantsOf(cwd, resolve, cache)].some((variant) => placeholder.has(variant))) {
+    if (cwd && isPlaceholder(cwd)) {
       // No directory recorded: never part of a directory's list; listed under home otherwise.
       if (target) continue;
       cwd = homedir();
     }
     if (target && requestedCwd) {
-      if (!cwd) continue;
-      const variants = variantsOf(cwd, resolve, cache);
-      if (![...variants].some((variant) => target.has(variant))) continue;
+      const matchesTarget = (value: string) =>
+        [...variantsOf(value, resolve, cache)].some((variant) => target.has(variant));
+      const matched =
+        (cwd !== undefined && matchesTarget(cwd)) ||
+        (sessionId !== null &&
+          storedCwds(sessionId).some((stored) => !isPlaceholder(stored) && matchesTarget(stored)));
+      if (!matched) continue;
       arranged.push({ ...session, cwd: requestedCwd });
     } else {
+      if (cwd && normalize(cwd) === "/" && sessionId !== null) {
+        const better = storedCwds(sessionId).find((stored) => normalize(stored) !== "/" && !isPlaceholder(stored));
+        if (better) cwd = better;
+      }
       arranged.push(cwd === undefined ? { ...session } : { ...session, cwd });
     }
   }

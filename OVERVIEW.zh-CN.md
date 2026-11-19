@@ -10,7 +10,7 @@ Antigravity+ 为 Paseo 增加了一个通过 `agy acp`（Antigravity CLI 内置�
 - 子代理交由 Paseo 托管：agy 自带的 `invoke_subagent` 创建的子代理在 Paseo 中不可见也不可控，因此在 Antigravity+ 会话中会被拦截，并引导模型改用 Paseo 的 `create_agent`。依赖原生子代理的命令（如 `/teamwork`、`/boost`）在此不可用，需在 agy 终端中使用。
 - 上下文用量指示器：根据 agy 的用量更新实时显示在输入框旁。
 - 运行中插话（Steering）：在当前轮次运行期间发送的消息会并入当前轮次继续执行，而不会打断重来。
-- 按模型独立配置思考档位：每个模型拥有各自的思考档位选项（例如 Gemini 4 Hydrogen 支持 XHigh，无档位变体的模型不显示档位）。
+- 按模型独立配置思考档位：每个模型拥有各自的思考档位选项（例如 Gemini 4 Neon 与 Gemini 4 Hydrogen 支持 XHigh，无档位变体的模型不显示档位）。
 
 ## 配置说明
 
@@ -18,7 +18,7 @@ Antigravity+ 为 Paseo 增加了一个通过 `agy acp`（Antigravity CLI 内置�
 
 ## 额度监控
 
-额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Gemini 4 Hydrogen 和 Flash 模型共享池的 "Gemini" 窗口（接口未返回该池的周期长度，故仅按名称展示）。Gemini 4 Argon 使用独立额度且该后端不返回，因此不包含在 Gemini 窗口内。访问令牌仅用于上述查询请求；当令牌过期时，插件会执行一次 `agy models` 让 agy 自行刷新登录，插件只使用访问令牌，不使用也不保存 refresh token，也不会写入钥匙串。
+额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，并带上本机 `agy` CLI 版本标识（`antigravity/cli/<version>`）向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称以及后端返回的全部额度组：Gemini 共享池（Gemini 4 Neon、Gemini 4 Hydrogen、Orchestrator (Neon) 与 Gemini 3.8 Flash）的周限额与 5 小时限额、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Pro 套餐下 Gemini 4 Argon 的独立周限额。若摘要接口未返回 Google 模型组，则回退查询 `fetchAvailableModels`。访问令牌仅用于上述查询请求；当令牌过期时，插件会执行一次 `agy models` 让 agy 自行刷新登录，插件只使用访问令牌，不使用也不保存 refresh token，也不会写入钥匙串。
 
 ## 环境要求
 

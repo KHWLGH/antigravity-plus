@@ -13,11 +13,13 @@ import {
   SessionListRelay,
   arrangeSessions,
   cliLoadable,
+  cliStoredCwds,
   decodeCwd,
   resetSessionListCache,
 } from "./session-list.ts";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { wrapConnection } from "./session-wrapper.ts";
 import {
   availableModelsSchema,
@@ -25,6 +27,13 @@ import {
   quotaSummarySchema,
   summaryWindows,
 } from "./quota-windows.ts";
+import {
+  createTitleSyncer,
+  extractAgySessionId,
+  provisionalTitle,
+  readAgyTitle,
+} from "./title-sync.ts";
+import type { PaseoApi } from "@getpaseo/client";
 
 test("copies the Paseo system prompt into agy's append meta", () => {
   const message = {
@@ -269,6 +278,67 @@ test("publishes one neutral window for the shared Google model pool", () => {
   assert.equal(windows[0].usedPct, 6.6);
 });
 
+test("maps Gemini, Claude/GPT, and Gemini 4 Argon groups when all are in the quota summary", () => {
+  const fullSummary = quotaSummarySchema.parse({
+    groups: [
+      {
+        displayName: "Gemini Models",
+        description: "Models within this group: Gemini 4 Neon, Gemini 4 Hydrogen, Orchestrator (Neon), Gemini 3.8 Flash",
+        buckets: [
+          {
+            bucketId: "gemini-weekly",
+            displayName: "Weekly Limit Remaining",
+            window: "weekly",
+            resetTime: "2026-11-25T00:21:52Z",
+            remainingFraction: 0.893,
+          },
+          {
+            bucketId: "gemini-5h",
+            displayName: "Five Hour Limit Remaining",
+            window: "5h",
+            resetTime: "2026-11-19T04:42:41Z",
+            remainingFraction: 0.933,
+          },
+        ],
+      },
+      ...summary.groups,
+      {
+        displayName: "Gemini 4 Argon",
+        description: "For paid Pro plans, Argon quota is separate.",
+        buckets: [
+          {
+            bucketId: "gemini-argon-wtu-weekly",
+            displayName: "Gemini 4 Argon Weekly Limit",
+            window: "weekly",
+            resetTime: "2026-11-24T23:34:14Z",
+            remainingFraction: 0.336,
+          },
+        ],
+      },
+    ],
+  });
+  const windows = summaryWindows(fullSummary);
+  assert.deepEqual(
+    windows.map((window) => [window.id, window.label, window.shortLabel, window.usedPct]),
+    [
+      ["group-gemini:weekly", "Gemini · Weekly", "Gemini wk", 10.7],
+      ["group-gemini:five_hour", "Gemini · 5-hour", "Gemini 5h", 6.7],
+      ["group-3p:weekly", "Claude and GPT · Weekly", "Claude and GPT wk", 16.5],
+      ["group-3p:five_hour", "Claude and GPT · 5-hour", "Claude and GPT 5h", 0],
+      ["group-gemini-argon-wtu:weekly", "Gemini 4 Argon · Weekly", "Gemini 4 Argon wk", 66.4],
+    ],
+  );
+  const models = availableModelsSchema.parse({
+    models: {
+      "gemini-4-neon-high": {
+        modelProvider: "MODEL_PROVIDER_GOOGLE",
+        quotaInfo: { remainingFraction: 0.933, resetTime: "2026-11-19T04:42:41Z" },
+      },
+    },
+  });
+  assert.deepEqual(googlePoolWindows(models, fullSummary), []);
+});
+
 const promptA = {
   jsonrpc: "2.0" as const,
   id: 7,
@@ -415,8 +485,8 @@ test("a failed open drops its session state", async () => {
 
 const kb = "/Users/dev/kb";
 const noRealpath = () => [];
-/** No real filesystem: every session loadable, no realpaths. */
-const plain = { resolve: noRealpath, loadable: () => true };
+/** No real filesystem: every session loadable, no realpaths, no stored cwds. */
+const plain = { resolve: noRealpath, loadable: () => true, storedCwds: () => [] };
 const listed = [
   { sessionId: "old", cwd: kb, updatedAt: "2026-11-01T00:00:00Z" },
   { sessionId: "sub", cwd: `${kb}/notes`, updatedAt: "2026-11-17T12:00:00Z" },
@@ -539,4 +609,220 @@ test("the shared list snapshot answers later requests, refreshing in the backgro
   now += 30 * 60_000;
   assert.equal(new SessionListRelay(options).outgoing({ jsonrpc: "2.0", id: 4, method: "session/list", params: {} }), null, "too old: ask agy");
   resetSessionListCache();
+});
+
+test("multi-root and legacy '/' conversations match their stored workspace_uris", () => {
+  const dir = mkdtempSync(join(tmpdir(), "agp-summaries-"));
+  const dbPath = join(dir, "conversation_summaries.db");
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, workspace_uris TEXT NOT NULL)");
+    const insert = db.prepare("INSERT INTO conversation_summaries (conversation_id, workspace_uris) VALUES (?, ?)");
+    insert.run("legacy-root", JSON.stringify(["file:///", "file:///Users/dev/kb"]));
+    insert.run("legacy-encoded", JSON.stringify(["file:///", "file:///Users/dev/%E5%AD%A6%E4%B9%A0"]));
+    insert.run("multi-root", JSON.stringify(["file:///Users/dev/other", "file:///Users/dev/kb"]));
+    insert.run("single-root", JSON.stringify(["file:///"]));
+    insert.run("broken-json", "not,json");
+    db.close();
+
+    const storedCwds = cliStoredCwds(dbPath);
+    assert.deepEqual(storedCwds("legacy-root"), ["/", "/Users/dev/kb"]);
+    assert.deepEqual(storedCwds("legacy-encoded"), ["/", "/Users/dev/学习"]);
+    assert.deepEqual(storedCwds("single-root"), []);
+    assert.deepEqual(storedCwds("broken-json"), []);
+    assert.deepEqual(cliStoredCwds(join(dir, "missing.db"))("legacy-root"), []);
+
+    const sessions = [
+      { sessionId: "legacy-root", cwd: "/", updatedAt: "2026-11-19T00:01:00Z" },
+      { sessionId: "legacy-encoded", cwd: "/", updatedAt: "2026-11-18T12:00:00Z" },
+      { sessionId: "multi-root", cwd: "/Users/dev/other", updatedAt: "2026-11-18T10:00:00Z" },
+      { sessionId: "single-root", cwd: "/", updatedAt: "2026-11-18T08:00:00Z" },
+    ];
+    const forKb = arrangeSessions(sessions, kb, { resolve: noRealpath, loadable: () => true, storedCwds });
+    assert.deepEqual(forKb.map((session) => session.sessionId), ["legacy-root", "multi-root"]);
+    assert.ok(forKb.every((session) => session.cwd === kb));
+
+    const forEncoded = arrangeSessions(sessions, "/Users/dev/学习", { resolve: noRealpath, loadable: () => true, storedCwds });
+    assert.deepEqual(forEncoded.map((session) => session.sessionId), ["legacy-encoded"]);
+
+    const all = arrangeSessions(sessions, null, { resolve: noRealpath, loadable: () => true, storedCwds });
+    assert.equal(all.find((session) => session.sessionId === "legacy-root")?.cwd, kb);
+    assert.equal(all.find((session) => session.sessionId === "legacy-encoded")?.cwd, "/Users/dev/学习");
+    assert.equal(all.find((session) => session.sessionId === "single-root")?.cwd, "/");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("extractAgySessionId, provisionalTitle and readAgyTitle parse agy metadata", () => {
+  assert.equal(
+    extractAgySessionId('plugin:{"version":1,"data":{"sessionId":"980b56eb-cfb1-4bbb-b37a-e8b0210fcb89"}}'),
+    "980b56eb-cfb1-4bbb-b37a-e8b0210fcb89",
+  );
+  assert.equal(extractAgySessionId("abc-123"), "abc-123");
+  assert.equal(extractAgySessionId("plugin:not-json"), null);
+  assert.equal(extractAgySessionId(""), null);
+
+  assert.equal(
+    provisionalTitle("\n  Hello   world\nsecond line"),
+    "Hello world",
+  );
+  assert.equal(
+    provisionalTitle("a".repeat(80)),
+    "a".repeat(60),
+  );
+
+  const dir = mkdtempSync(join(tmpdir(), "agp-title-"));
+  const dbPath = join(dir, "conversation_summaries.db");
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL)");
+    const insert = db.prepare("INSERT INTO conversation_summaries (conversation_id, title) VALUES (?, ?)");
+    insert.run("s-titled", "  Antigravity Plus\n  插件验收评审  ");
+    insert.run("s-empty", "   ");
+    db.close();
+
+    assert.equal(readAgyTitle("s-titled", dbPath), "Antigravity Plus 插件验收评审");
+    assert.equal(readAgyTitle("s-empty", dbPath), null);
+    assert.equal(readAgyTitle("s-missing", dbPath), null);
+    assert.equal(readAgyTitle("s-titled", join(dir, "missing.db")), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function fakePaseoForTitle(state: {
+  title: string | null;
+  firstPrompt: string;
+  sessionId?: string | null;
+  workspaceName?: string | null;
+}) {
+  const workspaceTitles: string[] = [];
+  const api = {
+    agents: {
+      ref() {
+        return {
+          async refresh() {
+            return {
+              agent: {
+                title: state.title,
+                workspaceId: state.workspaceName === undefined ? null : "wks_1",
+                runtimeInfo:
+                  state.sessionId === undefined
+                    ? { sessionId: 'plugin:{"version":1,"data":{"sessionId":"agy-uuid-1"}}' }
+                    : state.sessionId
+                      ? { sessionId: state.sessionId }
+                      : null,
+              },
+            };
+          },
+          timeline: {
+            async refetch() {
+              return {
+                entries: [{ item: { type: "user_message", text: state.firstPrompt } }],
+                hasNewer: false,
+                endCursor: null,
+              };
+            },
+          },
+        };
+      },
+    },
+    workspaces: {
+      ref() {
+        return {
+          async refresh() {
+            return { name: state.workspaceName ?? null };
+          },
+          async setTitle(next: string) {
+            workspaceTitles.push(next);
+            state.workspaceName = next;
+            return { title: next };
+          },
+        };
+      },
+    },
+  } as unknown as PaseoApi;
+  return { api, workspaceTitles };
+}
+
+test("title sync replaces Paseo's provisional title with agy's generated title once ready", async () => {
+  const firstPrompt = "帮我查一下这个历史会话为什么在导入列表里面找不到，顺便检查一下是不是目录过滤引起的";
+  const provisional = provisionalTitle(firstPrompt)!;
+  const state = { title: provisional, firstPrompt, workspaceName: provisional };
+  const { api, workspaceTitles } = fakePaseoForTitle(state);
+  const renames: Array<{ agentId: string; title: string }> = [];
+  let reads = 0;
+  const syncer = createTitleSyncer({
+    retryDelaysMs: [0, 1, 1],
+    delay: async () => true,
+    readTitle(sessionId) {
+      assert.equal(sessionId, "agy-uuid-1");
+      reads += 1;
+      return reads < 2 ? null : "历史会话导入排查";
+    },
+    async rename(agentId, title) {
+      renames.push({ agentId, title });
+      state.title = title;
+      return true;
+    },
+  });
+
+  const agent = { id: "a1", provider: "antigravity-plus", background: false };
+  assert.equal(await syncer.sync(agent, api), true);
+  assert.deepEqual(renames, [{ agentId: "a1", title: "历史会话导入排查" }]);
+  assert.deepEqual(workspaceTitles, ["历史会话导入排查"]);
+  assert.equal(await syncer.sync(agent, api), false, "already synced once");
+});
+
+test("title sync never overwrites explicit, user-edited, or mid-wait renamed titles", async () => {
+  const custom = fakePaseoForTitle({
+    title: "[Advisor] Antigravity+ 项目验收",
+    firstPrompt: "请验收一下当前插件",
+  });
+  let renameCalls = 0;
+  const syncer = createTitleSyncer({
+    retryDelaysMs: [0],
+    delay: async () => true,
+    readTitle: () => "Antigravity Plus 插件验收评审",
+    async rename() {
+      renameCalls += 1;
+      return true;
+    },
+  });
+  assert.equal(
+    await syncer.sync({ id: "a-custom", provider: "antigravity-plus", background: false }, custom.api),
+    false,
+  );
+  assert.equal(
+    await syncer.sync({ id: "a-other", provider: "claude", background: false }, custom.api),
+    false,
+  );
+  assert.equal(
+    await syncer.sync({ id: "a-bg", provider: "antigravity-plus", background: true }, custom.api),
+    false,
+  );
+
+  // User renames the agent while we are waiting for agy to finish summarizing.
+  const prompt = "检查一下配置文件";
+  const racingState = { title: provisionalTitle(prompt), firstPrompt: prompt };
+  const racing = fakePaseoForTitle(racingState);
+  let racingReads = 0;
+  const racingSyncer = createTitleSyncer({
+    retryDelaysMs: [0, 1],
+    delay: async (ms) => {
+      if (ms > 0) racingState.title = "用户手动改的标题";
+      return true;
+    },
+    readTitle: () => (++racingReads < 2 ? null : "配置文件检查"),
+    async rename() {
+      renameCalls += 1;
+      return true;
+    },
+  });
+  assert.equal(
+    await racingSyncer.sync({ id: "a-race", provider: "antigravity-plus", background: false }, racing.api),
+    false,
+  );
+  assert.equal(renameCalls, 0);
 });

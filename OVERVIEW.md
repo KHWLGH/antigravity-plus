@@ -10,7 +10,7 @@ Antigravity+ adds a second Antigravity provider to Paseo that runs `agy acp`, th
 - Subagents through Paseo. agy's own `invoke_subagent` starts subagents that Paseo cannot show or control, so it is blocked in Antigravity+ sessions and agy is told to use Paseo's `create_agent` instead. agy commands that rely on native subagents, such as `/teamwork` and `/boost`, do not work here; use the agy terminal UI for them.
 - The context window meter in the composer, from agy's usage updates.
 - Steering: a message sent during a running turn joins that turn instead of interrupting it.
-- Model and thinking level as separate choices, with each model's own levels, such as XHigh for Gemini 4 Hydrogen.
+- Model and thinking level as separate choices, with each model's own levels, such as XHigh for Gemini 4 Neon and Gemini 4 Hydrogen.
 
 ## Setup
 
@@ -18,7 +18,7 @@ Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, link
 
 ## Quota
 
-The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota. It reports the plan name, a weekly and a 5-hour limit for Claude and GPT models, and a "Gemini" window for the pool shared by Gemini 4 Hydrogen and the Flash models. Google does not report a length for that pool, so it is labeled by name only. Gemini 4 Argon has a separate quota that this backend does not report, so the Gemini window leaves Argon out. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin only uses the access token, never uses or stores the refresh token, and never writes the Keychain.
+The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota using the installed `agy` CLI version header (`antigravity/cli/<version>`). It reports the plan name along with the quota groups returned by the backend: weekly and 5-hour limits for the shared Gemini pool (Gemini 4 Neon, Gemini 4 Hydrogen, Orchestrator (Neon) and Gemini 3.8 Flash), weekly and 5-hour limits for Claude and GPT models, and the separate weekly limit for Gemini 4 Argon (Pro plans). If the summary omits Google models, it falls back to `fetchAvailableModels`. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin only uses the access token, never uses or stores the refresh token, and never writes the Keychain.
 
 ## Requirements
 

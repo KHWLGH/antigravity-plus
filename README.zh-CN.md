@@ -10,10 +10,10 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 - **极速会话导入**：按当前工作区目录列出本地 `agy` CLI 会话（按更新时间倒序，带内存缓存与后台刷新），并自动过滤 `agy acp` 无法加载的 Antigravity 桌面端会话。
 - **斜杠命令与技能**：在 Paseo 输入框中支持 `/goal`、`/plan`、`/compact`、`/grill-me` 等斜杠命令与自定义技能补全。
 - **完善的权限模式**：在 `agy` 原生的 **Default**、**Accept edits**、**Auto**、**Plan** 之外新增 **Bypass** 模式（新建代理默认启用，不进终端沙箱，在流层以 `allow_once` 自动批准权限请求，不污染全局授权配置）。
-- **按模型独立匹配思考档位**：根据 `agy` 的模型变体列表为不同模型提供专属档位（如 Gemini 4 Hydrogen 支持 `XHigh`，GPT-OSS 与 Orchestrator 等无档位模型自动隐藏档位选择）。
+- **按模型独立匹配思考档位**：根据 `agy` 的模型变体列表为不同模型提供专属档位（如 Gemini 4 Neon 与 Gemini 4 Hydrogen 支持 `XHigh`，GPT-OSS 与 Orchestrator 等无档位模型自动隐藏档位选择）。
 - **运行中插话（Steering）**：在运行轮次中发送新消息会直接并入当前轮次继续执行，不会打断重来。
 - **Paseo MCP 与子代理编排**：向 `agy` 透传 Paseo MCP 服务与系统指令，拦截不可见不可控的原生 `invoke_subagent`，引导模型统一使用 Paseo 的 `create_agent` 创建可见、可控的子代理标签页。
-- **上下文圆环与额度面板**：输入框实时展示上下文窗口占用；macOS 下在 Usage 面板展示套餐名称、Claude/GPT（周限额与 5 小时限额）及 Gemini（Hydrogen/Flash 共享池）额度。
+- **上下文圆环与额度面板**：输入框实时展示上下文窗口占用；macOS 下在 Usage 面板展示套餐名称、Gemini 共享池（周限额与 5 小时限额，涵盖 Neon / Hydrogen / Flash）、Claude/GPT（周限额与 5 小时限额）以及 Gemini 4 Argon（独立周限额）。
 
 ## 环境要求
 
@@ -23,7 +23,13 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 
 ## 安装方式
 
-直接从 GitHub 安装（或待官方商城收录后通过商城安装）：
+从 Paseo 官方插件商城安装：
+
+```bash
+paseo plugin add jule-x/antigravity-plus
+```
+
+或直接从 GitHub 安装：
 
 ```bash
 paseo plugin add git:jule-x/antigravity-plus
