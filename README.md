@@ -15,6 +15,10 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 - **Paseo MCP & subagent orchestration**: Forwards Paseo's MCP servers and agent system instructions to `agy`, and redirects subagent creation from `agy`'s hidden `invoke_subagent` to Paseo's visible, controllable `create_agent`.
 - **Context window & Usage panel quota**: Reports live context window usage in the composer and displays Gemini (Weekly & 5-hour shared pool for Neon/Hydrogen/Flash), Claude/GPT (Weekly & 5-hour), and Gemini 4 Argon (Weekly) quota windows on macOS.
 
+## Manual account switching
+
+Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. Each complete login is stored in the macOS Keychain. One account serves all sessions, which share agy’s local conversation history. Once all Antigravity+ turns are idle, you can switch accounts and continue a conversation. The accounts page shows the latest live reading for the active account and a dated snapshot for each standby account. Google’s consumer plans do not support automatic account switching. When quota runs out, select the account alert in the composer and confirm the switch.
+
 ## Requirements
 
 - **Paseo** `>= 0.16.0`

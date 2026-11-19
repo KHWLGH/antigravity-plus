@@ -16,6 +16,9 @@
     "icon.svg",
     "assets/",
     "index.server.ts",
+    "index.client.tsx",
+    "client/",
+    "shared/",
     "server/",
     "agy-plugin/"
   ],

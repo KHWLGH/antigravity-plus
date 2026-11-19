@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { execCommand } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import type {
+  ProviderConnection,
   ProviderLaunch,
   ProviderRegistration,
   ProviderStatus,
@@ -67,7 +68,15 @@ async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {
   }
 }
 
-export function createAntigravityPlusProvider(): ProviderRegistration {
+export interface ProviderAccounts {
+  ready(): Promise<void>;
+  activeId(): string | null;
+  canOpen(): boolean;
+  guard(connection: ProviderConnection): ProviderConnection;
+  rememberLaunch(launch: ProviderLaunch): void;
+}
+
+export function createAntigravityPlusProvider(accounts?: ProviderAccounts): ProviderRegistration {
   return {
     id: PROVIDER_ID,
     label: LABEL,
@@ -85,14 +94,18 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
     },
     async getCatalogCacheKey({ launch }) {
       if (!launch) return undefined;
+      await accounts?.ready();
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
       return createHash("sha256")
-        .update(JSON.stringify([PROVIDER_ID, CATALOG_REVISION, launch.command, launch.args, env]))
+        .update(JSON.stringify([PROVIDER_ID, CATALOG_REVISION, accounts?.activeId(), launch.command, launch.args, env]))
         .digest("hex");
     },
     async connect(request) {
       const launch = request.launch;
       if (!launch) throw new Error("The daemon must supply the agy launch command");
+      await accounts?.ready();
+      if (accounts && !accounts.canOpen()) throw new Error("Account change in progress");
+      accounts?.rememberLaunch(launch);
       // Fill the Import session list in the background so the dialog opens without agy's start-up wait.
       void refreshSessionList(launch, AGY_ENV);
       const inner = await runAcpProvider({
@@ -100,8 +113,10 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
         label: LABEL,
         icon: "icon.svg",
         connector: () => {
+          if (accounts && !accounts.canOpen()) throw new Error("Account change in progress");
           const context = launchContext.getStore();
           const agy = openAgyStream(launch, context?.env ?? { ...AGY_ENV }, {
+            canProbe: accounts?.canOpen,
             policy: context?.policy,
             cwd: context?.cwd,
             appendSystemPrompt: SUBAGENT_GUIDANCE,
@@ -113,10 +128,11 @@ export function createAntigravityPlusProvider(): ProviderRegistration {
         // agy sends commands and skills right after session/new|load; wait so the composer has them.
         acpOptions: { waitForInitialCommands: true },
       }).connect(request);
-      return wrapConnection(inner, request.capabilities, {
+      const connection = wrapConnection(inner, request.capabilities, {
         modelIds: latestModelIds,
         env: AGY_ENV,
       });
+      return accounts?.guard(connection) ?? connection;
     },
   };
 }

@@ -187,6 +187,32 @@ export class SteeringRelay {
 }
 
 let observedModelIds: string[] = [];
+let modelGeneration = 0;
+const processes = new Map<Promise<void>, { probe: boolean; stop(): void }>();
+
+export function resetObservedModels(): void {
+  observedModelIds = [];
+  modelGeneration++;
+}
+
+/** Capture the current generation. New children opened by reload belong to the new account. */
+export function captureAgyProcesses(probesOnly = false) {
+  const previous = [...processes].filter(([, child]) => !probesOnly || child.probe);
+  return {
+    stop() { for (const [, child] of previous) child.stop(); },
+    async wait() {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all(previous.map(([closed]) => closed)),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Previous agy process did not exit")), 35000);
+          }),
+        ]);
+      } finally { clearTimeout(timer); }
+    },
+  };
+}
 
 /**
  * Model ids from agy's last session/new or session/load answer, effort variants included
@@ -214,6 +240,7 @@ export interface PermissionPolicy {
 
 export interface AgyStreamOptions {
   policy?: PermissionPolicy;
+  canProbe?: () => boolean;
   /**
    * agy's working directory. agy records it as the conversation's directory and treats it as a
    * workspace root, so it must be the session's own directory, never "/".
@@ -266,11 +293,14 @@ export function openAgyStream(
     cwd,
     stdio: "pipe",
   });
+  const generation = modelGeneration;
+  const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+  void closed.then(() => processes.delete(closed));
   const relay = new SteeringRelay();
   // agy reports conversations without a stored directory in this process's own directory.
   const lists = new SessionListRelay({
     placeholderCwd: cwd,
-    refresh: () => void refreshSessionList(launch, env),
+    refresh: () => { if (options.canProbe?.() !== false) void refreshSessionList(launch, env); },
   });
   let deliverToAdapter: (message: AcpStreamMessage) => void = () => undefined;
   let stderrTail = "";
@@ -292,6 +322,7 @@ export function openAgyStream(
     kill.unref();
     child.once("close", () => clearTimeout(kill));
   };
+  processes.set(closed, { probe: !options.policy, stop });
   const write = (message: AcpStreamMessage) =>
     new Promise<void>((resolve, reject) => {
       if (stopping || child.stdin.destroyed) {
@@ -325,7 +356,7 @@ export function openAgyStream(
           console.error("[antigravity-plus] agy acp wrote a non-JSON line; ignored");
           return;
         }
-        observeModels(message);
+        if (generation === modelGeneration) observeModels(message);
         const listed = lists.incoming(message);
         if (listed) {
           for (const request of listed.send) {

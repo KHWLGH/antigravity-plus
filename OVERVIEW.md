@@ -18,7 +18,11 @@ Blocking `invoke_subagent` needs the companion agy plugin in `agy-plugin/`, link
 
 ## Quota
 
-The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota using the installed `agy` CLI version header (`antigravity/cli/<version>`). It reports the plan name along with the quota groups returned by the backend: weekly and 5-hour limits for the shared Gemini pool (Gemini 4 Neon, Gemini 4 Hydrogen, Orchestrator (Neon) and Gemini 3.8 Flash), weekly and 5-hour limits for Claude and GPT models, and the separate weekly limit for Gemini 4 Argon (Pro plans). If the summary omits Google models, it falls back to `fetchAvailableModels`. The access token is used only for these requests. When it has expired, the source runs `agy models` once so agy refreshes its own login; the plugin only uses the access token, never uses or stores the refresh token, and never writes the Keychain.
+The quota source reads agy's Google login from the macOS Keychain (service `gemini`) and asks Google's Antigravity backend (`daily-cloudcode-pa.googleapis.com`) for quota using the installed `agy` CLI version header (`antigravity/cli/<version>`). It reports the plan name along with the quota groups returned by the backend: weekly and 5-hour limits for the shared Gemini pool (Gemini 4 Neon, Gemini 4 Hydrogen, Orchestrator (Neon) and Gemini 3.8 Flash), weekly and 5-hour limits for Claude and GPT models, and the separate weekly limit for Gemini 4 Argon (Pro plans). If the summary omits Google models, it falls back to `fetchAvailableModels`. The access token is used only for these requests. When it expires, the source runs `agy models` so agy can refresh the active login.
+
+## Manual account switching
+
+Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. Each complete login is stored in the macOS Keychain. One account serves all sessions, which share agy’s local conversation history. Once all Antigravity+ turns are idle, you can switch accounts and continue a conversation. The accounts page shows the latest live reading for the active account and a dated snapshot for each standby account. Google’s consumer plans do not support automatic account switching. When quota runs out, select the account alert in the composer and confirm the switch.
 
 ## Requirements
 

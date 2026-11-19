@@ -18,7 +18,11 @@ Antigravity+ 为 Paseo 增加了一个通过 `agy acp`（Antigravity CLI 内置�
 
 ## 额度监控
 
-额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，并带上本机 `agy` CLI 版本标识（`antigravity/cli/<version>`）向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称以及后端返回的全部额度组：Gemini 共享池（Gemini 4 Neon、Gemini 4 Hydrogen、Orchestrator (Neon) 与 Gemini 3.8 Flash）的周限额与 5 小时限额、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Pro 套餐下 Gemini 4 Argon 的独立周限额。若摘要接口未返回 Google 模型组，则回退查询 `fetchAvailableModels`。访问令牌仅用于上述查询请求；当令牌过期时，插件会执行一次 `agy models` 让 agy 自行刷新登录，插件只使用访问令牌，不使用也不保存 refresh token，也不会写入钥匙串。
+额度数据源从 macOS 钥匙串（服务名 `gemini`）读取 agy 的 Google 登录凭证，并带上本机 `agy` CLI 版本标识（`antigravity/cli/<version>`）向 Google 的 Antigravity 后端（`daily-cloudcode-pa.googleapis.com`）查询额度，展示套餐名称以及后端返回的全部额度组：Gemini 共享池（Gemini 4 Neon、Gemini 4 Hydrogen、Orchestrator (Neon) 与 Gemini 3.8 Flash）的周限额与 5 小时限额、Claude 与 GPT 模型的周限额与 5 小时限额，以及 Pro 套餐下 Gemini 4 Argon 的独立周限额。若摘要接口未返回 Google 模型组，则回退查询 `fetchAvailableModels`。访问令牌过期时，插件会执行一次 `agy models`，由 agy 刷新当前登录。
+
+## 手动切换账号
+
+在侧栏的 **Antigravity+ accounts** 添加自己的 Google 消费者账号。每个账号的完整登录凭证保存在 macOS 钥匙串中，agy 使用其中一个账号，所有账号共用本地会话历史。等 Antigravity+ 的轮次全部结束后，即可在账号页切换并续聊。账号页显示活跃号最近的实时读数，以及备用号在标注时间的额度快照。Google 的消费者套餐不支持自动切号，额度用尽时需在输入框点击账号提醒，确认后才会切换。
 
 ## 环境要求
 

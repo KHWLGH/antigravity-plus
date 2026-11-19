@@ -15,6 +15,10 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 - **Paseo MCP 与子代理编排**：向 `agy` 透传 Paseo MCP 服务与系统指令，拦截不可见不可控的原生 `invoke_subagent`，引导模型统一使用 Paseo 的 `create_agent` 创建可见、可控的子代理标签页。
 - **上下文圆环与额度面板**：输入框实时展示上下文窗口占用；macOS 下在 Usage 面板展示套餐名称、Gemini 共享池（周限额与 5 小时限额，涵盖 Neon / Hydrogen / Flash）、Claude/GPT（周限额与 5 小时限额）以及 Gemini 4 Argon（独立周限额）。
 
+## 手动切换账号
+
+在侧栏的 **Antigravity+ accounts** 添加自己的 Google 消费者账号。每个账号的完整登录凭证保存在 macOS 钥匙串中，agy 使用其中一个账号，所有账号共用本地会话历史。等 Antigravity+ 的轮次全部结束后，即可在账号页切换并续聊。账号页显示活跃号最近的实时读数，以及备用号在标注时间的额度快照。Google 的消费者套餐不支持自动切号，额度用尽时需在输入框点击账号提醒，确认后才会切换。
+
 ## 环境要求
 
 - **Paseo** `>= 0.16.0`

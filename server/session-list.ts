@@ -343,6 +343,10 @@ export class SessionListRelay {
 
 let refreshing: Promise<void> | null = null;
 
+export async function drainSessionListProbe(): Promise<void> {
+  await refreshing;
+}
+
 /**
  * Fetches agy's full session list in the background into the shared snapshot. At most one runs
  * at a time; failures only log, since the next Import dialog request fetches again.
@@ -357,6 +361,8 @@ export function refreshSessionList(launch: ProviderLaunch, env: Readonly<Record<
 async function fetchSessionList(launch: ProviderLaunch, env: Readonly<Record<string, string>>): Promise<void> {
   const cwd = listWorkingDirectory();
   const child = spawnProcess(launch.command, launch.args, { env: { ...launch.env, ...env }, cwd, stdio: "pipe" });
+  const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+  child.stdin.on("error", () => undefined);
   child.stderr.on("data", () => undefined);
   child.on("error", () => undefined);
   const waiters = new Map<number, (message: JsonObject) => void>();
@@ -401,6 +407,7 @@ async function fetchSessionList(launch: ProviderLaunch, env: Readonly<Record<str
     child.stdin.end();
     const kill = setTimeout(() => void terminateProcess(child), 3000);
     kill.unref();
-    child.once("close", () => clearTimeout(kill));
+    await closed;
+    clearTimeout(kill);
   }
 }
