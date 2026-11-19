@@ -1,20 +1,17 @@
 import { useState } from "react";
 import { useRpc } from "@getpaseo/plugin/client";
 import {
-  ExternalLink, Loading, Modal, ScrollView, SettingsAction, SettingsInput, SettingsRow,
-  SettingsSection, SettingsSwitch,
+  Loading, Modal, ScrollView, SettingsAction, SettingsInput, SettingsRow,
+  SettingsSection,
 } from "@getpaseo/plugin/client/ui";
 import { accountsRpc, type AccountView } from "../shared/accounts-rpc.ts";
+import { ErrorMessage } from "./error-message.tsx";
+import { AddAccount } from "./add-account.tsx";
 import { remaining, windows } from "./account-choice.ts";
 import { useAccountView, type AccountStore } from "./store.ts";
 
 export const accountLabel = (account: AccountView) => account.nickname || account.email;
 const localTime = (value: string) => new Date(value).toLocaleString();
-
-export function ErrorMessage({ message }: { message: string }) {
-  const link = message.match(/https:\/\/[^\s"'<>]+/)?.[0];
-  return <SettingsRow label={message}>{link && <ExternalLink href={link}>Open verification link</ExternalLink>}</SettingsRow>;
-}
 
 function QuotaRows({ account, active }: { account: AccountView; active: boolean }) {
   const snapshot = account.snapshot;
@@ -41,13 +38,11 @@ type Dialog = { kind: "switch" | "remove" | "rename"; account: AccountView } | {
 export function AccountsScreen({ store, confirmId }: { store: AccountStore; confirmId?: string }) {
   const { view, error } = useAccountView(store);
   const switchAccount = useRpc(accountsRpc.switch);
-  const add = useRpc(accountsRpc.add);
   const remove = useRpc(accountsRpc.remove);
   const rename = useRpc(accountsRpc.rename);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [nickname, setNickname] = useState("");
-  const [makeActive, setMakeActive] = useState(false);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState("");
   const target = view?.accounts.find((account) => account.id === confirmId && account.id !== view.activeAccountId);
@@ -60,11 +55,10 @@ export function AccountsScreen({ store, confirmId }: { store: AccountStore; conf
   function open(next: Dialog) {
     setProblem("");
     setNickname(next.kind === "rename" ? next.account.nickname ?? "" : "");
-    setMakeActive(false);
     setDialog(next);
   }
   async function submit() {
-    if (!current || pending) return;
+    if (!current || current.kind === "add" || pending) return;
     setPending(true);
     setProblem("");
     try {
@@ -72,7 +66,6 @@ export function AccountsScreen({ store, confirmId }: { store: AccountStore; conf
         case "switch": await switchAccount({ id: current.account.id }); break;
         case "remove": await remove({ id: current.account.id }); break;
         case "rename": await rename({ id: current.account.id, nickname }); break;
-        case "add": await add({ makeActive }); break;
       }
       close();
     } catch (failure) {
@@ -86,7 +79,7 @@ export function AccountsScreen({ store, confirmId }: { store: AccountStore; conf
   // Another client can own a live operation, or an interrupted journal can need a retry.
   // The server distinguishes the two under its mutex. Keep recovery reachable in both cases.
   const disabled = pending;
-  const title = current?.kind === "add" ? "Add account" : current?.kind === "switch" ? "Switch account" :
+  const title = current?.kind === "switch" ? "Switch account" :
     current?.kind === "remove" ? "Delete standby account" : "Rename account";
   return <>
     <ScrollView contentContainerStyle={{ gap: 16, padding: 16 }}>
@@ -106,14 +99,12 @@ export function AccountsScreen({ store, confirmId }: { store: AccountStore; conf
       })}
       <SettingsAction label="Sign in through agy" actionLabel="Add account" disabled={disabled} onPress={() => open({ kind: "add" })} />
     </ScrollView>
-    {current && <Modal open title={title} onOpenChange={(visible) => { if (!visible && !pending) close(); }}>
+    {current?.kind === "add" && <AddAccount close={close} refresh={store.refresh} />}
+    {current && current.kind !== "add" && <Modal open title={title} onOpenChange={(visible) => { if (!visible && !pending) close(); }}>
       <Modal.Content>
-        {current.kind !== "add" && <SettingsRow label={accountLabel(current.account)} hint={current.account.email} />}
-        {current.kind === "add" && <SettingsSwitch label="Use the new login for all sessions" value={makeActive}
-          onValueChange={setMakeActive} disabled={disabled} />}
+        <SettingsRow label={accountLabel(current.account)} hint={current.account.email} />
         {current.kind === "rename" && <SettingsInput label="Nickname" initialValue={nickname} onChangeText={setNickname} disabled={disabled} />}
         {current.kind === "switch" && <SettingsRow label="All idle Antigravity+ sessions will use this account." />}
-        {pending && current.kind === "add" && <SettingsRow label="Complete sign-in in the browser on the daemon host." />}
         {problem && <ErrorMessage message={problem} />}
         <SettingsAction label={title} actionLabel={pending ? "Working…" : "Confirm"} disabled={disabled} onPress={() => void submit()} />
         <SettingsAction label="Close dialog" actionLabel="Cancel" disabled={pending} onPress={close} />

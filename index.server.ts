@@ -1,9 +1,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { execCommand, type PluginServerContext } from "@getpaseo/plugin/server";
+import { spawnProcess, type PluginServerContext } from "@getpaseo/plugin/server";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { accountsRpc } from "./shared/accounts-rpc.ts";
 import { AccountManager } from "./server/accounts.ts";
+import { AccountLogins } from "./server/interactive-login.ts";
 import { AccountRuntime } from "./server/account-runtime.ts";
 import { captureAgyProcesses, resetObservedModels } from "./server/agy-stream.ts";
 import { MacKeychainStore } from "./server/keychain.ts";
@@ -18,6 +19,9 @@ export default function contribute(server: PluginServerContext) {
   const keychain = new MacKeychainStore();
   const quota = new AccountQuota(keychain);
   let launch: ProviderLaunch | undefined;
+  const logins = new AccountLogins(() => spawnProcess(launch?.command ?? "agy", ["acp", "--login"], {
+    env: { ...process.env, ...launch?.env }, stdio: "pipe",
+  }));
   let quotaError = false;
   const accounts = new AccountManager({
     keychain,
@@ -32,15 +36,7 @@ export default function contribute(server: PluginServerContext) {
       old.stop();
       await old.wait();
     },
-    login: async () => {
-      try {
-        await execCommand(launch?.command ?? "agy", ["acp", "--login"], {
-          env: { ...process.env, ...launch?.env }, timeout: 300_000, killSignal: "SIGKILL",
-        });
-      } catch {
-        throw new Error("Antigravity login failed, was cancelled, or timed out.");
-      }
-    },
+    login: () => logins.run(),
     reset: () => {
       quotaError = false;
       quota.reset();
@@ -116,7 +112,19 @@ export default function contribute(server: PluginServerContext) {
     return {ok: true as const};
   };
   server.handle(accountsRpc.switch, ({id}, ctx) => { runtime.attach(ctx.paseo); return mutate(() => accounts.switch(id)); });
-  server.handle(accountsRpc.add, ({makeActive}, ctx) => { runtime.attach(ctx.paseo); return mutate(() => accounts.add(makeActive)); });
+  server.handle(accountsRpc.add, ({makeActive}, ctx) => {
+    runtime.attach(ctx.paseo);
+    return logins.begin(async () => { await mutate(() => accounts.add(makeActive)); });
+  });
+  server.handle(accountsRpc.loginStatus, ({id}) => logins.status(id));
+  server.handle(accountsRpc.loginSubmit, ({id, value}) => {
+    logins.attempt(id).submit(value);
+    return { ok: true as const };
+  });
+  server.handle(accountsRpc.loginCancel, ({id}) => {
+    logins.attempt(id).cancel();
+    return { ok: true as const };
+  });
   server.handle(accountsRpc.remove, ({id}, ctx) => { runtime.attach(ctx.paseo); return mutate(() => accounts.remove(id)); });
   server.handle(accountsRpc.rename, ({id, nickname}, ctx) => {
     runtime.attach(ctx.paseo);
@@ -124,5 +132,5 @@ export default function contribute(server: PluginServerContext) {
   });
   const detachOpen = server.addHook("agent.open.before", async (_, ctx) => { runtime.attach(ctx.paseo); });
   const stopTitleSync = registerTitleSync(server);
-  return () => { detachOpen(); stopTitleSync(); };
+  return async () => { await logins.dispose(); detachOpen(); stopTitleSync(); };
 }

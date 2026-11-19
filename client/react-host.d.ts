@@ -8,6 +8,7 @@ declare module "react" {
   export type ForwardRefExoticComponent<Props> = ComponentType<Props>;
   export type Ref<T> = ((value: T | null) => void) | { current: T | null } | null;
   export type RefAttributes<T> = { ref?: Ref<T> };
+  export function useRef<T>(initial: T): { current: T };
   export function useEffect(effect: () => void | (() => void), deps: readonly unknown[]): void;
   export function useState<T>(initial: T): [T, (value: T) => void];
   export function useSyncExternalStore<T>(subscribe: (listener: () => void) => () => void, read: () => T): T;
