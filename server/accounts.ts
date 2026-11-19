@@ -145,8 +145,8 @@ export class AccountManager {
   }
 
   private async idle() {
-    const ids = await this.options.busyAgents();
-    if (ids.length) throw new Error("Wait for active turns: " + ids.join(", "));
+    const labels = await this.options.busyAgents();
+    if (labels.length) throw new Error("Wait for active turns: " + labels.join(", "));
   }
 
   private async beforeReplace() {

@@ -7,7 +7,7 @@ import {
 import { accountsRpc, type AccountView } from "../shared/accounts-rpc.ts";
 import { ErrorMessage } from "./error-message.tsx";
 import { AddAccount } from "./add-account.tsx";
-import { remaining, windows } from "./account-choice.ts";
+import { quotaSummary, remaining, windows } from "./account-choice.ts";
 import { useAccountView, type AccountStore } from "./store.ts";
 
 export const accountLabel = (account: AccountView) => account.nickname || account.email;
@@ -30,6 +30,17 @@ function QuotaRows({ account, active }: { account: AccountView; active: boolean 
         reset && "Reset " + localTime(reset), elapsed && "Reset time passed; recovery expected"].filter(Boolean).join(" · ");
       return <SettingsRow key={window.id} label={window.label} hint={hint} />;
     })}
+  </>;
+}
+
+function AccountQuota({ account, active, quotaError }: { account: AccountView; active: boolean; quotaError: boolean }) {
+  const [choice, setChoice] = useState<boolean | null>(null);
+  const summary = quotaSummary(account, active, quotaError);
+  const expanded = choice ?? summary.defaultExpanded;
+  return <>
+    <SettingsAction label={summary.label} actionLabel={expanded ? "Hide quota details" : "Show quota details"}
+      onPress={() => setChoice(!expanded)} />
+    {expanded && <QuotaRows account={account} active={active} />}
   </>;
 }
 
@@ -89,7 +100,7 @@ export function AccountsScreen({ store, confirmId }: { store: AccountStore; conf
         const active = account.id === view.activeAccountId;
         return <SettingsSection key={account.id} title={accountLabel(account)}>
           <SettingsRow label={active ? "Active account" : "Standby account"} hint={account.email} />
-          <QuotaRows account={account} active={active} />
+          <AccountQuota account={account} active={active} quotaError={view.quotaError} />
           {!active && <SettingsAction label="Use this account for all sessions" actionLabel="Switch"
             disabled={disabled} onPress={() => open({ kind: "switch", account })} />}
           <SettingsAction label="Nickname" actionLabel="Rename" disabled={disabled} onPress={() => open({ kind: "rename", account })} />
