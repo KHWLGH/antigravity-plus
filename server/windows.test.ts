@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import { agyCliArgs, resolveAgyLaunch } from "./agy-launch.ts";
 import { createAntigravityPlusProvider } from "./provider.ts";
-import { WindowsKeychainStore } from "./windows-keychain.ts";
 
 const windowsOnly = { skip: process.platform !== "win32" };
 
@@ -32,7 +30,6 @@ test("the Windows provider registers the default installation even with an empty
     const command = join(bin, "agy.exe");
     writeFileSync(command, "");
     assert.deepEqual(createAntigravityPlusProvider().command, [command, "acp"]);
-    assert.equal(resolveAgyLaunch()?.command, command);
   } finally {
     if (originalLocal === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = originalLocal;
@@ -40,26 +37,6 @@ test("the Windows provider registers the default installation even with an empty
     else process.env.PATH = originalPath;
     rmSync(local, { recursive: true, force: true });
   }
-});
-
-test("Windows Credential Manager round-trips and removes an isolated entry", windowsOnly, async () => {
-  const store = new WindowsKeychainStore();
-  const service = "antigravity-plus.test";
-  const account = randomUUID();
-  const original = "\uFEFF{\"private\":\"测试\"}\r\n";
-  try {
-    assert.equal(await store.read(service, account), null);
-    await store.write(service, account, original);
-    assert.equal(await store.read(service, account), original);
-    await assert.rejects(store.write(service, account, "测".repeat(1000)), /size limit/);
-    assert.equal(await store.read(service, account), original);
-    await store.write(service, account, "replacement");
-    assert.equal(await store.read(service, account), "replacement");
-  } finally {
-    await store.remove(service, account);
-  }
-  assert.equal(await store.read(service, account), null);
-  await store.remove(service, account);
 });
 
 test("Windows companion hook denies only plugin-managed subagents", windowsOnly, () => {

@@ -1,8 +1,9 @@
+import { useState } from "react";
 import {
-  useTranslation, type PluginButtonContentProps, type PluginButtonIconProps, type PluginButtonRegistration,
-  type PluginClientContext, type PluginSidebarItemProps, type PluginText,
+  useComposer, useTranslation, type PluginButtonContentProps, type PluginButtonIconProps, type PluginButtonRegistration,
+  type PluginClientContext, type PluginHostProps, type PluginSidebarItemProps, type PluginText,
 } from "@getpaseo/plugin/client";
-import { Icon, Loading, ScrollView, SettingsAction, SettingsRow, SidebarRow } from "@getpaseo/plugin/client/ui";
+import { Action, Icon, Loading, Modal, ScrollView, SettingsAction, SettingsRow, SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Text } from "react-native";
 import { AccountsScreen } from "./client/accounts-screen.tsx";
 import { composerChoice } from "./client/account-choice.ts";
@@ -25,20 +26,23 @@ export default function contribute(client: PluginClientContext) {
       active={currentScreen?.screenId === screenId} onPress={() => openScreen({ screenId })} />,
   });
 
-  function QuotaIcon({ size, color, theme }: PluginButtonIconProps) {
-    const { view } = useAccountView(store);
-    const active = view?.accounts.find((account) => account.id === view.activeAccountId);
-    const depleted = !!(view && active && composerChoice(view, active).depleted);
-    return <Icon name={depleted ? "CircleAlert" : "Gauge"} size={size} color={depleted ? theme.colors.statusWarning : color} />;
-  }
-
-  function QuotaPopover({ close, layout, theme }: PluginButtonContentProps) {
-    const { t } = useTranslation(messages);
+  function useActiveQuota() {
     const { view, error } = useAccountView(store);
     const active = view?.accounts.find((account) => account.id === view.activeAccountId);
     const choice = view && active ? composerChoice(view, active) : undefined;
+    return { view, error, active, choice };
+  }
+
+  function QuotaIcon({ size, color, theme }: PluginButtonIconProps) {
+    const depleted = useActiveQuota().choice?.depleted;
+    return <Icon name={depleted ? "CircleAlert" : "Gauge"} size={size} color={depleted ? theme.colors.statusWarning : color} />;
+  }
+
+  function QuotaContent({ close, theme }: { close(): void; theme: PluginHostProps["theme"] }) {
+    const { t } = useTranslation(messages);
+    const { view, error, active, choice } = useActiveQuota();
     const confirmId = choice?.confirmId;
-    return <ScrollView style={{ width: layout.compact ? "100%" : 320, maxHeight: 380 }} contentContainerStyle={{ gap: 12, padding: 12 }}>
+    return <>
       {!view && !error && <Loading />}
       {error && <ErrorMessage message={error} />}
       {view && !active && <SettingsRow label={t("signedOut")} />}
@@ -51,8 +55,33 @@ export default function contribute(client: PluginClientContext) {
         close();
         client.openScreen({ screenId, params: confirmId ? { confirm: confirmId, request: String(Date.now()) } : {} });
       }} />
+    </>;
+  }
+
+  function QuotaPopover({ close, layout, theme }: PluginButtonContentProps) {
+    return <ScrollView style={{ width: layout.compact ? "100%" : 320, maxHeight: 380 }} contentContainerStyle={{ gap: 12, padding: 12 }}>
+      <QuotaContent close={close} theme={theme} />
     </ScrollView>;
   }
+
+  function QuotaAction({ theme }: PluginHostProps) {
+    const { t } = useTranslation(messages);
+    const [open, setOpen] = useState(false);
+    const depleted = useActiveQuota().choice?.depleted;
+    return <>
+      <Action title={t("quota")} icon={depleted ? "CircleAlert" : "Gauge"} onPress={() => setOpen(true)} />
+      {open && <Modal title={t("quota")} open onOpenChange={setOpen}>
+        <Modal.Content>
+          <QuotaContent close={() => setOpen(false)} theme={theme} />
+        </Modal.Content>
+      </Modal>}
+    </>;
+  }
+
+  const composer = client.addComposerItem({
+    id: "quota",
+    Component: (props) => useComposer().agent.provider === "antigravity-plus" ? <QuotaAction {...props} /> : null,
+  });
 
   const lifetime = new AbortController();
   const pills = new Map<string, { workspaceId: string; registration: PluginButtonRegistration<PluginText> }>();
@@ -93,6 +122,7 @@ export default function contribute(client: PluginClientContext) {
   return () => {
     lifetime.abort();
     for (const id of pills.keys()) remove(id);
+    composer();
     sidebar();
     screen();
     store.dispose();

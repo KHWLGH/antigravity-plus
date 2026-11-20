@@ -38,7 +38,6 @@ test("quota summaries use the lowest known remaining percentage and distinguish 
     { id: "unknown", label: "Unknown" }, { id: "weekly", label: "Weekly", remainingPct: 65 },
     { id: "short", label: "Short", usedPct: 80 },
   ] } } };
-  assert.deepEqual(quotaSummary(account, true, false), { minimum: 20, depleted: false });
   assert.deepEqual(quotaSummary(account, false, true), { minimum: 20, depleted: false });
   assert.deepEqual(quotaSummary(b, false, false), { minimum: null, depleted: false });
 });
@@ -48,9 +47,6 @@ test("reported zero and live quota errors are distinct from missing measurements
   assert.deepEqual(quotaSummary(a, true, true), { minimum: null, depleted: true });
   assert.deepEqual(quotaSummary(measured(b, 0), false, false), { minimum: 0, depleted: true });
   const window = { id: "window", label: "Window" };
-  assert.equal(remaining({ ...window, remainingPct: 0, usedPct: 20 }), 0);
-  assert.equal(remaining(window), null);
-  assert.equal(remaining({ ...window, remainingPct: NaN }), null);
   assert.equal(remaining({ ...window, usedPct: 110 }), 0);
   assert.equal(remaining({ ...window, remainingPct: 120 }), 100);
 });

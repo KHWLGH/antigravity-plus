@@ -17,7 +17,9 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 
 ## Manual account switching
 
-Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. The plugin stores complete logins in macOS Keychain or Windows Credential Manager. A switch changes agy's shared login, including for standalone agy and Paseo's built-in Antigravity provider. Close those sessions and wait for Antigravity+ turns to finish before switching. Accounts share agy's local conversation history. The accounts page shows remaining quota as progress bars and timestamps standby snapshots. Open **Quota** in an Antigravity+ agent's composer to see the current account's bars and reset times. When quota runs out, **Manage accounts** can suggest a standby account for confirmation. The plugin follows Paseo's language setting, with Simplified Chinese and English strings.
+Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. The plugin stores complete logins in macOS Keychain or Windows Credential Manager. A switch changes agy's shared login, including for standalone agy and Paseo's built-in Antigravity provider. Close those sessions and wait for Antigravity+ turns to finish before switching. Accounts share agy's local conversation history. The accounts page shows remaining quota as progress bars and timestamps standby snapshots. When quota runs out, **Manage accounts** can suggest a standby account for confirmation. The plugin follows Paseo's language setting, with Simplified Chinese and English strings.
+
+Select an **Antigravity+** model to see **Quota** alongside the model and mode controls, even before sending your first prompt. When space is limited, look for **Quota** in the agent features panel opened by the settings icon. The panel shows the current account's remaining quota and reset times. Existing agents also have a **Quota** shortcut above the composer.
 
 ## Requirements
 
