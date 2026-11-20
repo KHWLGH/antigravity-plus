@@ -13,17 +13,17 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 - **按模型独立匹配思考档位**：根据 `agy` 的模型变体列表为不同模型提供专属档位（如 Gemini 4 Neon 与 Gemini 4 Hydrogen 支持 `XHigh`，GPT-OSS 与 Orchestrator 等无档位模型自动隐藏档位选择）。
 - **运行中插话（Steering）**：在运行轮次中发送新消息会直接并入当前轮次继续执行，不会打断重来。
 - **Paseo MCP 与子代理编排**：向 `agy` 透传 Paseo MCP 服务与系统指令，拦截不可见不可控的原生 `invoke_subagent`，引导模型统一使用 Paseo 的 `create_agent` 创建可见、可控的子代理标签页。
-- **上下文圆环与额度面板**：输入框实时展示上下文窗口占用；macOS 下在 Usage 面板展示套餐名称、Gemini 共享池（周限额与 5 小时限额，涵盖 Neon / Hydrogen / Flash）、Claude/GPT（周限额与 5 小时限额）以及 Gemini 4 Argon（独立周限额）。
+- **上下文圆环与额度面板**：输入框实时展示上下文窗口占用。Windows 和 macOS 的 Usage 面板展示套餐名称、Gemini 共享池、Claude/GPT 额度和 Gemini 4 Argon 独立周限额。
 
 ## 手动切换账号
 
-在侧栏的 **Antigravity+ accounts** 添加自己的 Google 消费者账号。每个账号的完整登录凭证保存在 macOS 钥匙串中，agy 使用其中一个账号，所有账号共用本地会话历史。等 Antigravity+ 的轮次全部结束后，即可在账号页切换并续聊。账号页显示活跃号最近的实时读数，以及备用号在标注时间的额度快照。Google 的消费者套餐不支持自动切号，额度用尽时需在输入框点击账号提醒，确认后才会切换。
+在侧栏的 **Antigravity+ accounts** 添加自己的 Google 消费者账号。完整登录凭据保存在 Windows 凭据管理器或 macOS 钥匙串中。切换会更新 agy 的共享登录，也会影响独立运行的 agy 和 Paseo 内置的 Antigravity 提供商。切号前先关闭这些会话，再等待 Antigravity+ 的轮次全部结束。各账号共用本地会话历史。账号页显示活跃账号最近的额度读数和备用账号的额度快照。额度用尽时，可以在输入框点击账号提醒并确认切换。
 
 ## 环境要求
 
 - **Paseo** `>= 0.16.0`
-- **Antigravity CLI (`agy`)** `>= 1.5.8`（在 `PATH` 中可执行且已登录）
-- **仅支持 macOS**：额度监控读取 macOS 钥匙串中的 `gemini` 登录项，配套钩子通过 `/bin/sh` 运行。不支持 Windows，Linux 未经测试。
+- **Antigravity CLI (`agy`)** `>= 1.5.8`，且已登录。通过 `PATH` 或 Windows 默认安装路径 `%LOCALAPPDATA%\agy\bin\agy.exe` 启动。
+- **支持 Windows 和 macOS**。Windows 使用系统自带的 Windows PowerShell 和凭据管理器。Linux 未经测试。
 
 ## 安装方式
 
@@ -39,9 +39,25 @@ paseo plugin add jule-x/antigravity-plus
 paseo plugin add git:jule-x/antigravity-plus
 ```
 
+### Windows 本地安装
+
+从包含 Windows 改动的源码目录运行以下 PowerShell 命令。第一行使用 Paseo 桌面版默认安装目录中的 CLI。
+
+```powershell
+$paseoCli = Join-Path $env:LOCALAPPDATA 'Programs\Paseo\resources\bin\paseo.cmd'
+npm ci
+& $paseoCli plugin install (Get-Location).Path
+agy plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
+& $paseoCli plugin ls antigravity-plus
+```
+
+本地 Paseo 需在 **Settings → Plugins** 启用插件。新建代理或导入会话时选择 **Antigravity+**。修改本地源码后，用 `plugin reload antigravity-plus` 重载。修改 Windows 钩子后，重新执行伴随插件的安装命令。
+
+导入历史请使用 Paseo 桌面端的 **Import session**。Paseo 0.16.2 附带的 `paseo.cmd` 可能会丢掉传给 `agent import` 的 JSON 会话标识中的引号。
+
 ### 配置伴随 `agy` 插件（推荐）
 
-为了在 Antigravity+ 会话中强制拦截 `agy` 内置的 `invoke_subagent`、让模型始终通过 Paseo 的 `create_agent` 启动子代理，请将插件内的 `agy-plugin` 软链到 `agy` 全局插件目录：
+伴随插件在 Antigravity+ 会话中拦截 `agy` 内置的 `invoke_subagent`，引导模型通过 Paseo 的 `create_agent` 启动子代理。Windows 使用上面的伴随插件安装命令。macOS 将 `agy-plugin` 软链到 agy 的全局插件目录：
 
 ```bash
 mkdir -p ~/.gemini/config/plugins

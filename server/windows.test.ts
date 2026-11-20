@@ -1,0 +1,49 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { agyCliArgs, resolveAgyLaunch } from "./agy-launch.ts";
+import { WindowsKeychainStore } from "./windows-keychain.ts";
+
+const windowsOnly = { skip: process.platform !== "win32" };
+
+test("agy probes preserve the daemon's launcher and argument prefix", () => {
+  const launch = { command: "custom-launcher", args: ["run", "agy", "acp"], env: { MARKER: "fixture" } };
+  assert.equal(resolveAgyLaunch(launch), launch);
+  assert.deepEqual(agyCliArgs(launch, ["--version"]), ["run", "agy", "--version"]);
+});
+
+test("Windows Credential Manager round-trips and removes an isolated entry", windowsOnly, async () => {
+  const store = new WindowsKeychainStore();
+  const service = "antigravity-plus.test";
+  const account = randomUUID();
+  const original = "\uFEFF{\"private\":\"测试\"}\r\n";
+  try {
+    assert.equal(await store.read(service, account), null);
+    await store.write(service, account, original);
+    assert.equal(await store.read(service, account), original);
+    await assert.rejects(store.write(service, account, "测".repeat(1000)), /size limit/);
+    assert.equal(await store.read(service, account), original);
+    await store.write(service, account, "replacement");
+    assert.equal(await store.read(service, account), "replacement");
+  } finally {
+    await store.remove(service, account);
+  }
+  assert.equal(await store.read(service, account), null);
+  await store.remove(service, account);
+});
+
+test("Windows companion hook denies only plugin-managed subagents", windowsOnly, () => {
+  const config = JSON.parse(readFileSync(new URL("../agy-plugin/windows/hooks.json", import.meta.url), "utf8"));
+  const guard = config["antigravity-plus-subagents"].PreToolUse[0];
+  assert.equal(guard.matcher, "invoke_subagent");
+  for (const [flag, expected] of [["", "allow"], ["1", "deny"]]) {
+    const result = spawnSync(guard.hooks[0].command, {
+      shell: true, input: "{}\n", encoding: "utf8", timeout: 5000, windowsHide: true,
+      env: { ...process.env, ANTIGRAVITY_PLUS: flag },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).decision, expected);
+  }
+});

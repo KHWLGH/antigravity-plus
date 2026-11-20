@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { execCommand } from "@getpaseo/plugin/server";
 import { runAcpProvider, type AcpTransformer } from "@getpaseo/plugin/server/acp";
 import type {
   ProviderConnection,
@@ -8,6 +7,7 @@ import type {
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import { latestModelIds, openAgyStream } from "./agy-stream.ts";
+import { execAgy, resolveAgyLaunch } from "./agy-launch.ts";
 import { refreshSessionList } from "./session-list.ts";
 import { DEFAULT_MODE, withBypassMode, withModelThinking } from "./catalog.ts";
 import { launchContext, wrapConnection } from "./session-wrapper.ts";
@@ -44,10 +44,7 @@ function compareVersion(version: string): number | null {
 
 async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus> {
   try {
-    const { stdout } = await execCommand(launch.command, ["--version"], {
-      env: launch.env,
-      timeout: 10_000,
-    });
+    const { stdout } = await execAgy(["--version"], 10_000, launch);
     const version = stdout.trim();
     const comparison = compareVersion(version);
     if (comparison === null) {
@@ -83,16 +80,19 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
     icon: "icon.svg",
     command: ["agy", "acp"],
     description: "Antigravity CLI through its ACP server, with history, permissions and skills",
-    async status({ launch }) {
+    async status(request) {
+      const launch = resolveAgyLaunch(request.launch);
       if (!launch) {
         return {
           available: false,
           diagnostic: "agy not found on PATH. Install Antigravity, then run `agy` and sign in.",
         };
       }
+      accounts?.rememberLaunch(launch);
       return getStatus(launch);
     },
-    async getCatalogCacheKey({ launch }) {
+    async getCatalogCacheKey(request) {
+      const launch = resolveAgyLaunch(request.launch);
       if (!launch) return undefined;
       await accounts?.ready();
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
@@ -101,7 +101,7 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
         .digest("hex");
     },
     async connect(request) {
-      const launch = request.launch;
+      const launch = resolveAgyLaunch(request.launch);
       if (!launch) throw new Error("The daemon must supply the agy launch command");
       await accounts?.ready();
       if (accounts && !accounts.canOpen()) throw new Error("Account change in progress");
@@ -127,7 +127,7 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
         transformers: [catalogTransformer],
         // agy sends commands and skills right after session/new|load; wait so the composer has them.
         acpOptions: { waitForInitialCommands: true },
-      }).connect(request);
+      }).connect({ ...request, launch });
       const connection = wrapConnection(inner, request.capabilities, {
         modelIds: latestModelIds,
         env: AGY_ENV,

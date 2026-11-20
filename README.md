@@ -13,17 +13,17 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 - **Per-model thinking levels**: Derives each model's supported thinking levels from `agy`'s variant catalog (including `XHigh` for Gemini 4 Neon and Gemini 4 Hydrogen, and no thinking selector for level-less models like GPT-OSS and Orchestrator).
 - **Mid-turn steering**: Messages sent during an active turn join the running turn instead of interrupting it.
 - **Paseo MCP & subagent orchestration**: Forwards Paseo's MCP servers and agent system instructions to `agy`, and redirects subagent creation from `agy`'s hidden `invoke_subagent` to Paseo's visible, controllable `create_agent`.
-- **Context window & Usage panel quota**: Reports live context window usage in the composer and displays Gemini (Weekly & 5-hour shared pool for Neon/Hydrogen/Flash), Claude/GPT (Weekly & 5-hour), and Gemini 4 Argon (Weekly) quota windows on macOS.
+- **Context window & Usage panel quota**: Reports live context window usage in the composer and displays Gemini (Weekly & 5-hour shared pool for Neon/Hydrogen/Flash), Claude/GPT (Weekly & 5-hour), and Gemini 4 Argon (Weekly) quota windows on macOS and Windows.
 
 ## Manual account switching
 
-Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. Each complete login is stored in the macOS Keychain. One account serves all sessions, which share agy’s local conversation history. Once all Antigravity+ turns are idle, you can switch accounts and continue a conversation. The accounts page shows the latest live reading for the active account and a dated snapshot for each standby account. Google’s consumer plans do not support automatic account switching. When quota runs out, select the account alert in the composer and confirm the switch.
+Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. The plugin stores complete logins in macOS Keychain or Windows Credential Manager. A switch changes agy's shared login, including for standalone agy and Paseo's built-in Antigravity provider. Close those sessions and wait for Antigravity+ turns to finish before switching. Accounts share agy's local conversation history. The accounts page shows the active account's latest reading and a dated snapshot for each standby account. When quota runs out, select the account alert in the composer and confirm the switch.
 
 ## Requirements
 
 - **Paseo** `>= 0.16.0`
-- **Antigravity CLI (`agy`)** `>= 1.5.8`, installed on `PATH` and signed in
-- **macOS only**: the Usage panel quota source reads service `gemini` from the macOS Keychain, and the companion hook runs with `/bin/sh`. Windows is not supported; Linux is untested.
+- **Antigravity CLI (`agy`)** `>= 1.5.8`, signed in. Use `PATH` or the default Windows location `%LOCALAPPDATA%\agy\bin\agy.exe`.
+- **macOS and Windows**. Windows uses Windows Credential Manager and the system Windows PowerShell. Linux is untested.
 
 ## Installation
 
@@ -39,9 +39,25 @@ Or install directly from GitHub:
 paseo plugin add git:jule-x/antigravity-plus
 ```
 
+### Windows local checkout
+
+Run these commands from the Windows-compatible checkout in PowerShell. With the default Paseo Desktop installation, the launcher is bundled with the app.
+
+```powershell
+$paseoCli = Join-Path $env:LOCALAPPDATA 'Programs\Paseo\resources\bin\paseo.cmd'
+npm ci
+& $paseoCli plugin install (Get-Location).Path
+agy plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
+& $paseoCli plugin ls antigravity-plus
+```
+
+The local Paseo daemon needs plugins enabled in **Settings → Plugins**. Select **Antigravity+** as the provider when creating or importing an agent. After editing the local checkout, use `plugin reload antigravity-plus`. Reinstall the Windows companion if its hook changes.
+
+Use **Import session** in Paseo Desktop to import history. The bundled Paseo 0.16.2 `paseo.cmd` can strip quotes from the JSON session handle passed to `agent import`.
+
 ### Companion `agy` plugin (recommended)
 
-To enforce blocking `agy`'s internal `invoke_subagent` tool inside Antigravity+ sessions so the model always spawns visible Paseo subagents via `create_agent`, symlink the bundled `agy-plugin` directory into your global Antigravity plugins folder:
+The companion blocks agy's internal `invoke_subagent` tool inside Antigravity+ sessions so the model uses Paseo's `create_agent`. On Windows, use the companion install command in the local checkout instructions. On macOS, symlink the bundled `agy-plugin` directory into the global agy plugins folder:
 
 ```bash
 mkdir -p ~/.gemini/config/plugins
