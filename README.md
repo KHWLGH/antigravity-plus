@@ -17,7 +17,7 @@ Antigravity+ adds a full-featured Antigravity provider (`antigravity-plus`) to [
 
 ## Manual account switching
 
-Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. The plugin stores complete logins in macOS Keychain or Windows Credential Manager. A switch changes agy's shared login, including for standalone agy and Paseo's built-in Antigravity provider. Close those sessions and wait for Antigravity+ turns to finish before switching. Accounts share agy's local conversation history. The accounts page shows the active account's latest reading and a dated snapshot for each standby account. When quota runs out, select the account alert in the composer and confirm the switch.
+Open **Antigravity+ accounts** in the sidebar to add your Google consumer accounts. The plugin stores complete logins in macOS Keychain or Windows Credential Manager. A switch changes agy's shared login, including for standalone agy and Paseo's built-in Antigravity provider. Close those sessions and wait for Antigravity+ turns to finish before switching. Accounts share agy's local conversation history. The accounts page shows remaining quota as progress bars and timestamps standby snapshots. Open **Quota** in an Antigravity+ agent's composer to see the current account's bars and reset times. When quota runs out, **Manage accounts** can suggest a standby account for confirmation. The plugin follows Paseo's language setting, with Simplified Chinese and English strings.
 
 ## Requirements
 
@@ -27,7 +27,7 @@ Open **Antigravity+ accounts** in the sidebar to add your Google consumer accoun
 
 ## Installation
 
-Install from the official Paseo plugin registry:
+On Windows, follow the local checkout instructions. On macOS, install from the official Paseo plugin registry:
 
 ```bash
 paseo plugin add jule-x/antigravity-plus
@@ -41,19 +41,49 @@ paseo plugin add git:jule-x/antigravity-plus
 
 ### Windows local checkout
 
-Run these commands from the Windows-compatible checkout in PowerShell. With the default Paseo Desktop installation, the launcher is bundled with the app.
+Run these commands from this Windows-compatible checkout in PowerShell. Installing from the registry or GitHub above fetches the macOS upstream. With the default Paseo Desktop installation, the launcher is bundled with the app.
 
 ```powershell
 $paseoCli = Join-Path $env:LOCALAPPDATA 'Programs\Paseo\resources\bin\paseo.cmd'
+$agyCli = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+if (!(Test-Path -LiteralPath $agyCli -PathType Leaf)) { $agyCli = 'agy' }
 npm ci
 & $paseoCli plugin install (Get-Location).Path
-agy plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
+& $agyCli plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
 & $paseoCli plugin ls antigravity-plus
 ```
 
 The local Paseo daemon needs plugins enabled in **Settings → Plugins**. Select **Antigravity+** as the provider when creating or importing an agent. After editing the local checkout, use `plugin reload antigravity-plus`. Reinstall the Windows companion if its hook changes.
 
-Use **Import session** in Paseo Desktop to import history. The bundled Paseo 0.16.2 `paseo.cmd` can strip quotes from the JSON session handle passed to `agent import`.
+Use **Import session** in Paseo Desktop to import history. For scripted imports, run the packaged CLI directly in **PowerShell 7**. This preserves the JSON quotes that Paseo 0.16.2's `paseo.cmd` can drop. Set `$sessionId` to the native agy conversation ID and `$cwd` to its workspace directory.
+
+```powershell
+$sessionId = '<agy-session-id>'
+$cwd = 'C:\path\to\workspace'
+$paseoDir = Join-Path $env:LOCALAPPDATA 'Programs\Paseo'
+$handle = 'plugin:' + (@{version = 1; data = @{sessionId = $sessionId}} | ConvertTo-Json -Compress)
+$launch = [Diagnostics.ProcessStartInfo]::new()
+$launch.FileName = Join-Path $paseoDir 'Paseo.exe'
+$launch.UseShellExecute = $false
+$launch.CreateNoWindow = $true
+$launch.Environment['ELECTRON_RUN_AS_NODE'] = '1'
+$launch.Environment['PASEO_NODE_ENV'] = 'production'
+$launch.RedirectStandardOutput = $true
+$launch.RedirectStandardError = $true
+$arguments = @(
+  (Join-Path $paseoDir 'resources\app.asar.unpacked\dist\daemon\node-entrypoint-runner.js'),
+  'node-script',
+  (Join-Path $paseoDir 'resources\app.asar\node_modules\@getpaseo\cli\dist\index.js'),
+  'agent', 'import', '--provider', 'antigravity-plus', '--cwd', $cwd, '--json', $handle
+)
+foreach ($argument in $arguments) { $launch.ArgumentList.Add($argument) }
+$process = [Diagnostics.Process]::Start($launch)
+$stdout = $process.StandardOutput.ReadToEndAsync()
+$stderr = $process.StandardError.ReadToEndAsync()
+$process.WaitForExit()
+if ($process.ExitCode -ne 0) { throw ($stderr.Result + $stdout.Result) }
+$stdout.Result
+```
 
 ### Companion `agy` plugin (recommended)
 

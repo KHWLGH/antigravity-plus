@@ -17,7 +17,7 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 
 ## 手动切换账号
 
-在侧栏的 **Antigravity+ accounts** 添加自己的 Google 消费者账号。完整登录凭据保存在 Windows 凭据管理器或 macOS 钥匙串中。切换会更新 agy 的共享登录，也会影响独立运行的 agy 和 Paseo 内置的 Antigravity 提供商。切号前先关闭这些会话，再等待 Antigravity+ 的轮次全部结束。各账号共用本地会话历史。账号页显示活跃账号最近的额度读数和备用账号的额度快照。额度用尽时，可以在输入框点击账号提醒并确认切换。
+在侧栏的 **Antigravity+ 账号** 添加自己的 Google 消费者账号。完整登录凭据保存在 Windows 凭据管理器或 macOS 钥匙串中。切换会更新 agy 的共享登录，也会影响独立运行的 agy 和 Paseo 内置的 Antigravity 提供商。切号前先关闭这些会话，再等待 Antigravity+ 的轮次全部结束。各账号共用本地会话历史。账号页用进度条显示剩余额度，并标注备用账号的快照时间。点击 Antigravity+ 代理输入框旁的 **额度**，即可查看当前账号的进度条和重置时间。额度用尽时，**管理账号** 可推荐备用账号供你确认。插件跟随 Paseo 语言设置，提供简体中文和英文。
 
 ## 环境要求
 
@@ -27,7 +27,7 @@ Antigravity+ 为 [Paseo](https://paseo.sh) 提供基于 `agy acp`（Antigravity 
 
 ## 安装方式
 
-从 Paseo 官方插件商城安装：
+Windows 请使用下方的本地安装方式。macOS 可以从 Paseo 官方插件商城安装：
 
 ```bash
 paseo plugin add jule-x/antigravity-plus
@@ -41,19 +41,49 @@ paseo plugin add git:jule-x/antigravity-plus
 
 ### Windows 本地安装
 
-从包含 Windows 改动的源码目录运行以下 PowerShell 命令。第一行使用 Paseo 桌面版默认安装目录中的 CLI。
+从当前 Windows 适配版的本地源码目录运行以下 PowerShell 命令。上面的商城和 GitHub 安装命令会获取 macOS 上游版。
 
 ```powershell
 $paseoCli = Join-Path $env:LOCALAPPDATA 'Programs\Paseo\resources\bin\paseo.cmd'
+$agyCli = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+if (!(Test-Path -LiteralPath $agyCli -PathType Leaf)) { $agyCli = 'agy' }
 npm ci
 & $paseoCli plugin install (Get-Location).Path
-agy plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
+& $agyCli plugin install (Join-Path (Get-Location).Path 'agy-plugin\windows')
 & $paseoCli plugin ls antigravity-plus
 ```
 
 本地 Paseo 需在 **Settings → Plugins** 启用插件。新建代理或导入会话时选择 **Antigravity+**。修改本地源码后，用 `plugin reload antigravity-plus` 重载。修改 Windows 钩子后，重新执行伴随插件的安装命令。
 
-导入历史请使用 Paseo 桌面端的 **Import session**。Paseo 0.16.2 附带的 `paseo.cmd` 可能会丢掉传给 `agent import` 的 JSON 会话标识中的引号。
+可以使用 Paseo 桌面端的 **Import session** 导入历史。脚本导入可在 **PowerShell 7** 中直接运行桌面版自带的 CLI，保留 Paseo 0.16.2 的 `paseo.cmd` 可能丢掉的 JSON 引号。将 `$sessionId` 设置为 agy 原生会话 ID，`$cwd` 设置为该会话的工作区目录。
+
+```powershell
+$sessionId = '<agy-session-id>'
+$cwd = 'C:\path\to\workspace'
+$paseoDir = Join-Path $env:LOCALAPPDATA 'Programs\Paseo'
+$handle = 'plugin:' + (@{version = 1; data = @{sessionId = $sessionId}} | ConvertTo-Json -Compress)
+$launch = [Diagnostics.ProcessStartInfo]::new()
+$launch.FileName = Join-Path $paseoDir 'Paseo.exe'
+$launch.UseShellExecute = $false
+$launch.CreateNoWindow = $true
+$launch.Environment['ELECTRON_RUN_AS_NODE'] = '1'
+$launch.Environment['PASEO_NODE_ENV'] = 'production'
+$launch.RedirectStandardOutput = $true
+$launch.RedirectStandardError = $true
+$arguments = @(
+  (Join-Path $paseoDir 'resources\app.asar.unpacked\dist\daemon\node-entrypoint-runner.js'),
+  'node-script',
+  (Join-Path $paseoDir 'resources\app.asar\node_modules\@getpaseo\cli\dist\index.js'),
+  'agent', 'import', '--provider', 'antigravity-plus', '--cwd', $cwd, '--json', $handle
+)
+foreach ($argument in $arguments) { $launch.ArgumentList.Add($argument) }
+$process = [Diagnostics.Process]::Start($launch)
+$stdout = $process.StandardOutput.ReadToEndAsync()
+$stderr = $process.StandardError.ReadToEndAsync()
+$process.WaitForExit()
+if ($process.ExitCode -ne 0) { throw ($stderr.Result + $stdout.Result) }
+$stdout.Result
+```
 
 ### 配置伴随 `agy` 插件（推荐）
 

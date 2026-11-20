@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execCommand } from "@getpaseo/plugin/server";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 
-function installedWindowsAgy(): string | undefined {
+export function installedWindowsAgy(): string | undefined {
   if (process.platform !== "win32" || !process.env.LOCALAPPDATA) return;
   const command = join(process.env.LOCALAPPDATA, "agy", "bin", "agy.exe");
   if (statSync(command, { throwIfNoEntry: false })?.isFile()) return command;

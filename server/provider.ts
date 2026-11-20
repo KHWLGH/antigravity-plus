@@ -7,7 +7,7 @@ import type {
   ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import { latestModelIds, openAgyStream } from "./agy-stream.ts";
-import { execAgy, resolveAgyLaunch } from "./agy-launch.ts";
+import { execAgy, installedWindowsAgy, resolveAgyLaunch } from "./agy-launch.ts";
 import { refreshSessionList } from "./session-list.ts";
 import { DEFAULT_MODE, withBypassMode, withModelThinking } from "./catalog.ts";
 import { launchContext, wrapConnection } from "./session-wrapper.ts";
@@ -78,7 +78,7 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
     id: PROVIDER_ID,
     label: LABEL,
     icon: "icon.svg",
-    command: ["agy", "acp"],
+    command: [installedWindowsAgy() ?? "agy", "acp"],
     description: "Antigravity CLI through its ACP server, with history, permissions and skills",
     async status(request) {
       const launch = resolveAgyLaunch(request.launch);

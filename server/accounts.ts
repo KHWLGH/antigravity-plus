@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { hashAccountKey, type UsageReport } from "@getpaseo/plugin/server/usage";
+import type { AccountNotice } from "../shared/accounts-rpc.ts";
 
 export interface KeychainStore {
   read(service: string, account: string): Promise<string | null>;
@@ -94,7 +95,7 @@ export class AccountManager {
   private locked = false;
   private opening = false;
   private polling?: Promise<void>;
-  private notice: string | null = null;
+  private notice: AccountNotice | null = null;
   epoch = 0;
 
   constructor(options: AccountOptions) {
@@ -195,9 +196,9 @@ export class AccountManager {
       this.save({ ...this.state, accounts, activeAccountId: id, reloadPending });
       this.epoch++;
       this.options.reset();
-      this.notice = email ? `Active Antigravity account: ${email}` : "Antigravity is signed out";
+      this.notice = email ? { kind: "active", email } : { kind: "signed-out" };
     }
-    if (!id) this.notice = "Antigravity is signed out";
+    if (!id) this.notice = { kind: "signed-out" };
     if (this.state.reloadPending && !(await this.options.busyAgents()).length) {
       await this.options.beforeSlotChange?.();
       await this.reload();
