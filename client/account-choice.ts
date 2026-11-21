@@ -1,7 +1,8 @@
 import type { AccountView, AccountsView, WindowView } from "../shared/accounts-rpc.ts";
 
 export function remaining(window: WindowView) {
-  return window.remainingPct ?? (window.usedPct == null ? null : 100 - window.usedPct);
+  const value = window.remainingPct ?? (window.usedPct == null ? null : 100 - window.usedPct);
+  return value == null ? null : Math.round(value * 100) / 100;
 }
 
 export function windows(account: AccountView) {
