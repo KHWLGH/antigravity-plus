@@ -10,6 +10,7 @@ import { composerChoice } from "./client/account-choice.ts";
 import { ErrorMessage } from "./client/error-message.tsx";
 import { messages } from "./client/messages.ts";
 import { ActiveQuotaHeading, QuotaDetails } from "./client/quota-details.tsx";
+import { SettingsScreen } from "./client/settings-screen.tsx";
 import { createAccountStore, useAccountView } from "./client/store.ts";
 
 export default function contribute(client: PluginClientContext) {
@@ -24,6 +25,12 @@ export default function contribute(client: PluginClientContext) {
     id: screenId, title,
     Component: ({ currentScreen, openScreen }: PluginSidebarItemProps) => <SidebarRow icon="Users"
       active={currentScreen?.screenId === screenId} onPress={() => openScreen({ screenId })} />,
+  });
+  const settings = client.addSettingsScreen({
+    id: "settings",
+    title: "Antigravity+",
+    icon: "Shield",
+    Component: SettingsScreen,
   });
 
   function useActiveQuota() {
@@ -123,6 +130,7 @@ export default function contribute(client: PluginClientContext) {
     lifetime.abort();
     for (const id of pills.keys()) remove(id);
     composer();
+    settings();
     sidebar();
     screen();
     store.dispose();

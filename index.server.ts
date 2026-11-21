@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { spawnProcess, type PluginServerContext } from "@getpaseo/plugin/server";
 import type { ProviderLaunch } from "@getpaseo/plugin/server/provider";
 import { accountsRpc } from "./shared/accounts-rpc.ts";
+import { DEFAULT_PERMISSION_MODE, PREFERENCES_SETTINGS, type PermissionModeId } from "./shared/settings.ts";
 import { AccountManager } from "./server/accounts.ts";
 import { AccountLogins } from "./server/interactive-login.ts";
 import { AccountRuntime } from "./server/account-runtime.ts";
@@ -66,6 +67,20 @@ export default function contribute(server: PluginServerContext) {
   }
   void ready().catch(() => { /* Retry on the next request, where Paseo can display the error. */ });
 
+  const preferences = server.registerSettings(PREFERENCES_SETTINGS);
+  let defaultMode: PermissionModeId = DEFAULT_PERMISSION_MODE;
+  const preferencesReady = preferences
+    .read()
+    .then((state) => {
+      if (state.status === "ready") defaultMode = state.values.defaultMode;
+    })
+    .catch(() => {
+      // Keep the safe default ("default") if host settings cannot be read yet.
+    });
+  const stopPreferences = preferences.subscribe((state) => {
+    defaultMode = state.status === "ready" ? state.values.defaultMode : DEFAULT_PERMISSION_MODE;
+  });
+
   server.registerProvider(createAntigravityPlusProvider(supported ? {
     async ready() {
       if (accounts.busy && accounts.allowOpen) return; // The recovery itself is reopening an agent.
@@ -88,7 +103,10 @@ export default function contribute(server: PluginServerContext) {
       });
       return runtime.guard(connection, accounts);
     },
-  } : undefined));
+  } : undefined, {
+    ready: () => preferencesReady,
+    defaultMode: () => defaultMode,
+  }));
   const source = createAntigravityUsageSource(accounts, quota);
   server.registerUsageSource({
     ...source,
@@ -138,5 +156,5 @@ export default function contribute(server: PluginServerContext) {
   });
   const detachOpen = server.addHook("agent.open.before", async (_, ctx) => { runtime.attach(ctx.paseo); });
   const stopTitleSync = registerTitleSync(server);
-  return async () => { await logins.dispose(); detachOpen(); stopTitleSync(); };
+  return async () => { await logins.dispose(); detachOpen(); stopTitleSync(); stopPreferences(); };
 }

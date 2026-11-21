@@ -88,12 +88,13 @@ function fakeInner() {
   return { connection, sent, fire: (event: ProviderEvent) => listener(event) };
 }
 
-function wrapped() {
+function wrapped(extra: { defaultMode?: () => string } = {}) {
   const inner = fakeInner();
   const events: ProviderEvent[] = [];
   const connection = wrapConnection(inner.connection, ["prompt.steer"], {
     modelIds: () => ["gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh", "gpt-oss-120b-medium"],
     env: { ANTIGRAVITY_PLUS: "1" },
+    ...extra,
   });
   connection.onEvent((event) => events.push(event));
   return { inner, events, connection };
@@ -121,17 +122,33 @@ const innerConfig = (mode: string) => ({
   },
 });
 
-test("a new session starts in Bypass: agy gets Default, Paseo sees Bypass", async () => {
+test("a new session starts in Default (asks for permission) and keeps Bypass available", async () => {
   const { inner, events, connection } = wrapped();
   await connection.send(openInput({}));
   const sent = inner.sent[0] as Extract<ProviderInput, { type: "session.open" }>;
   assert.equal(sent.config.mode, "default");
   inner.fire(innerConfig("default"));
   const config = events.find((event) => event.type === "session.config") as ReturnType<typeof innerConfig>;
-  assert.equal(config.config.mode, "bypass");
+  assert.equal(config.config.mode, "default");
   assert.ok(config.config.modes.some((mode) => mode.id === "bypass"));
   const hydrogen = config.config.models[0] as { thinkingOptions?: Array<{ id: string }> };
   assert.deepEqual(hydrogen.thinkingOptions?.map((option) => option.id), ["high", "xhigh"]);
+});
+
+test("explicit Bypass or a user-configured default mode enters Bypass: agy gets Default, Paseo sees Bypass", async () => {
+  const explicit = wrapped();
+  await explicit.connection.send(openInput({ mode: "bypass" }));
+  assert.equal((explicit.inner.sent[0] as Extract<ProviderInput, { type: "session.open" }>).config.mode, "default");
+  explicit.inner.fire(innerConfig("default"));
+  const explicitConfig = explicit.events.find((event) => event.type === "session.config") as ReturnType<typeof innerConfig>;
+  assert.equal(explicitConfig.config.mode, "bypass");
+
+  const configured = wrapped({ defaultMode: () => "bypass" });
+  await configured.connection.send(openInput({}));
+  assert.equal((configured.inner.sent[0] as Extract<ProviderInput, { type: "session.open" }>).config.mode, "default");
+  configured.inner.fire(innerConfig("default"));
+  const configuredConfig = configured.events.find((event) => event.type === "session.config") as ReturnType<typeof innerConfig>;
+  assert.equal(configuredConfig.config.mode, "bypass");
 });
 
 test("a resumed session keeps agy's mode, and agy leaving Default ends Bypass", async () => {

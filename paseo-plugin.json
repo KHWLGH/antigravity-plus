@@ -3,6 +3,7 @@
   "name": "Antigravity+",
   "description": "Antigravity through agy's ACP server: history after restart, session import, slash commands and skills, permission modes, context usage, and quota.",
   "icon": "assets/icon.png",
+  "media": ["assets/screenshot.png"],
   "translations": {
     "zh-CN": {
       "name": "Antigravity+",

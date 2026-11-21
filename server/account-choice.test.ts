@@ -33,6 +33,12 @@ test("available quota opens the ordinary accounts screen", () => {
   assert.deepEqual(composerChoice(state([active, measured(b, 100)]), active), { depleted: false, confirmId: undefined });
 });
 
+test("positive quota below display precision is not treated as exhausted", () => {
+  const active = measured(a, 0.001);
+  assert.deepEqual(quotaSummary(active, true, false), { minimum: 0.001, depleted: false });
+  assert.deepEqual(composerChoice(state([active, measured(b, 100)]), active), { depleted: false, confirmId: undefined });
+});
+
 test("quota summaries use the lowest known remaining percentage and distinguish standby readings", () => {
   const account: AccountView = { ...b, snapshot: { readAt: "2026-01-01", report: { status: "available", windows: [
     { id: "unknown", label: "Unknown" }, { id: "weekly", label: "Weekly", remainingPct: 65 },
