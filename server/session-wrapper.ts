@@ -46,6 +46,8 @@ export interface WrapperOptions {
   modelIds(): readonly string[];
   /** Extra environment for every session's agy process. */
   env?: Readonly<Record<string, string>>;
+  /** Mode for new sessions when none is requested; defaults to agy's native Default mode. */
+  defaultMode?(): string;
 }
 
 interface SessionState {
@@ -240,8 +242,10 @@ export function wrapConnection(
   });
 
   function open(input: SessionOpen): Promise<void> {
-    // A new session without a mode starts in the default; a resumed one keeps agy's own.
-    const requestedMode = input.config.mode ?? (input.persistence ? undefined : DEFAULT_MODE);
+    // A new session without a mode starts in the configured default (agy's Default out of the box);
+    // a resumed session keeps agy's own mode unless one was explicitly requested.
+    const fallbackMode = options.defaultMode?.() ?? DEFAULT_MODE;
+    const requestedMode = input.config.mode ?? (input.persistence ? undefined : fallbackMode);
     const bypass = requestedMode === BYPASS_MODE_ID;
     const state: SessionState = {
       policy: { bypass },
@@ -296,8 +300,8 @@ export function wrapConnection(
       changes.thinkingOption = undefined;
     }
     if (changes.mode !== undefined) {
-      // null returns the mode to the provider default, which is Bypass.
-      const target = changes.mode ?? DEFAULT_MODE;
+      // null returns the mode to the configured default (agy's Default unless changed in settings).
+      const target = changes.mode ?? options.defaultMode?.() ?? DEFAULT_MODE;
       state.policy.bypass = target === BYPASS_MODE_ID;
       changes.mode = state.policy.bypass ? BYPASS_NATIVE_MODE : target;
     }

@@ -2,6 +2,7 @@ import { useComposer, type PluginClientContext, type PluginScreenProps, type Plu
 import { Action, SidebarRow } from "@getpaseo/plugin/client/ui";
 import { accountLabel, AccountsScreen } from "./client/accounts-screen.tsx";
 import { composerChoice } from "./client/account-choice.ts";
+import { SettingsScreen } from "./client/settings-screen.tsx";
 import { createAccountStore, useAccountView } from "./client/store.ts";
 
 export default function contribute(client: PluginClientContext) {
@@ -25,9 +26,15 @@ export default function contribute(client: PluginClientContext) {
     Component: ({ currentScreen, openScreen }: PluginSidebarItemProps) => <SidebarRow icon="Users"
       active={currentScreen?.screenId === screenId} onPress={() => openScreen({ screenId })} />,
   });
+  const settings = client.addSettingsScreen({
+    id: "settings",
+    title: "Antigravity+",
+    icon: "Shield",
+    Component: SettingsScreen,
+  });
   const composer = client.addComposerItem({
     id: "active-account",
     Component: () => useComposer().agent.provider === "antigravity-plus" ? <AccountAction /> : null,
   });
-  return () => { composer(); sidebar(); screen(); store.dispose(); };
+  return () => { composer(); settings(); sidebar(); screen(); store.dispose(); };
 }

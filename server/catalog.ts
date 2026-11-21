@@ -6,10 +6,10 @@ import type {
 
 /** Plugin-owned mode: agy runs in its Default mode and this plugin approves every request. */
 export const BYPASS_MODE_ID = "bypass";
-/** New agents start in Bypass; any agent can switch to a mode that asks first. */
-export const DEFAULT_MODE = BYPASS_MODE_ID;
 /** The agy mode Bypass runs on: it asks for everything and does not sandbox commands. */
 export const BYPASS_NATIVE_MODE = "default";
+/** New agents start in agy's native Default mode (asks before edits and commands). */
+export const DEFAULT_MODE = BYPASS_NATIVE_MODE;
 
 export const BYPASS_MODE: ProviderMode = {
   id: BYPASS_MODE_ID,

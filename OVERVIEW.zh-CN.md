@@ -5,7 +5,7 @@ Antigravity+ 为 Paseo 增加了一个通过 `agy acp`（Antigravity CLI 内置�
 - 重启或重载后保留历史会话：Paseo 通过 `session/load` 重新打开 agy 会话，并将历史消息回放到时间线中。
 - 会话导入：按当前所选目录列出本地 agy CLI 会话（按更新时间倒序），包含由内置 Antigravity 提供商或在 agy 终端中创建的会话。为避免列出 `agy acp` 无法加载的 Antigravity 桌面端会话，插件会检查 `~/.gemini/antigravity-cli/conversations/` 下是否存在本地会话数据库，并在独立的空临时目录（`$TMPDIR/antigravity-plus/session-list`）中执行 `session/list`。
 - 斜杠命令与技能：`/goal`、`/plan`、`/compact` 及自定义技能可直接出现在输入框自动补全中。
-- 权限模式：提供插件扩展的 Bypass 模式，以及 agy 原生的 Default、Accept edits、Auto 和 Plan 模式。新建代理默认使用 Bypass（不进终端沙箱，所有编辑与命令免确认执行）。Bypass 底层让 agy 运行在 Default 模式，并在流层以 `allow_once` 自动批准每次权限请求；切换到 Auto 等其他模式时则通过 Paseo 权限卡片询问。你在 agy 配置中的 deny 规则在所有模式下依然生效。
+- 权限模式：提供 agy 原生的 Default、Accept edits、Auto 和 Plan 模式，以及可选的 Bypass 模式。新建代理默认使用 Default，在执行编辑与命令前通过 Paseo 权限卡片请求确认；可在单个会话中随时切换到 Bypass，也可在 **Settings → Antigravity+** 中自定义新建会话的默认权限模式。Bypass 底层让 agy 运行在 Default 模式（不进终端沙箱），并在流层以 `allow_once` 自动批准每次权限请求；你在 agy 配置中的 deny 规则在所有模式下依然生效。
 - MCP 与系统指令透传：Paseo 的 MCP 服务与代理级系统指令会传给 agy，因此 Antigravity 代理可以直接使用 Paseo 的编排工具。
 - 子代理交由 Paseo 托管：agy 自带的 `invoke_subagent` 创建的子代理在 Paseo 中不可见也不可控，因此在 Antigravity+ 会话中会被拦截，并引导模型改用 Paseo 的 `create_agent`。依赖原生子代理的命令（如 `/teamwork`、`/boost`）在此不可用，需在 agy 终端中使用。
 - 上下文用量指示器：根据 agy 的用量更新实时显示在输入框旁。

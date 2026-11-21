@@ -18,19 +18,21 @@ const LABEL = "Antigravity+";
 /** agy 1.5.8 added context window updates to ACP sessions; earlier ACP lacks them. */
 const MIN_AGY = [1, 5, 8] as const;
 /** Bump when the catalog this plugin builds changes shape, so Paseo drops its cached copy. */
-const CATALOG_REVISION = 2;
+const CATALOG_REVISION = 3;
 
-/** Adds Bypass (the default for new agents) and each model's own thinking levels. */
-const catalogTransformer: AcpTransformer = {
-  discover(catalog) {
-    return {
-      ...catalog,
-      modes: withBypassMode(catalog.modes),
-      defaultMode: DEFAULT_MODE,
-      models: withModelThinking(catalog.models, latestModelIds()),
-    };
-  },
-};
+/** Adds Bypass as an explicit choice, applies the configured default mode, and adds per-model thinking levels. */
+function createCatalogTransformer(defaultMode: () => string): AcpTransformer {
+  return {
+    discover(catalog) {
+      return {
+        ...catalog,
+        modes: withBypassMode(catalog.modes),
+        defaultMode: defaultMode(),
+        models: withModelThinking(catalog.models, latestModelIds()),
+      };
+    },
+  };
+}
 
 function compareVersion(version: string): number | null {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -76,7 +78,19 @@ export interface ProviderAccounts {
   rememberLaunch(launch: ProviderLaunch): void;
 }
 
-export function createAntigravityPlusProvider(accounts?: ProviderAccounts): ProviderRegistration {
+export interface ProviderOptions {
+  /** Ensures host preferences have been loaded before reading `defaultMode`. */
+  ready?(): Promise<void>;
+  /** Mode for new sessions when none is requested; defaults to agy's native Default mode. */
+  defaultMode?(): string;
+}
+
+export function createAntigravityPlusProvider(
+  accounts?: ProviderAccounts,
+  options?: ProviderOptions,
+): ProviderRegistration {
+  const resolveDefaultMode = () => options?.defaultMode?.() ?? DEFAULT_MODE;
+  const catalogTransformer = createCatalogTransformer(resolveDefaultMode);
   return {
     id: PROVIDER_ID,
     label: LABEL,
@@ -94,16 +108,26 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
     },
     async getCatalogCacheKey({ launch }) {
       if (!launch) return undefined;
-      await accounts?.ready();
+      await Promise.all([accounts?.ready(), options?.ready?.()]);
       const env = Object.entries(launch.env).sort(([left], [right]) => left.localeCompare(right));
       return createHash("sha256")
-        .update(JSON.stringify([PROVIDER_ID, CATALOG_REVISION, accounts?.activeId(), launch.command, launch.args, env]))
+        .update(
+          JSON.stringify([
+            PROVIDER_ID,
+            CATALOG_REVISION,
+            resolveDefaultMode(),
+            accounts?.activeId(),
+            launch.command,
+            launch.args,
+            env,
+          ]),
+        )
         .digest("hex");
     },
     async connect(request) {
       const launch = request.launch;
       if (!launch) throw new Error("The daemon must supply the agy launch command");
-      await accounts?.ready();
+      await Promise.all([accounts?.ready(), options?.ready?.()]);
       if (accounts && !accounts.canOpen()) throw new Error("Account change in progress");
       accounts?.rememberLaunch(launch);
       // Fill the Import session list in the background so the dialog opens without agy's start-up wait.
@@ -131,6 +155,7 @@ export function createAntigravityPlusProvider(accounts?: ProviderAccounts): Prov
       const connection = wrapConnection(inner, request.capabilities, {
         modelIds: latestModelIds,
         env: AGY_ENV,
+        defaultMode: resolveDefaultMode,
       });
       return accounts?.guard(connection) ?? connection;
     },
